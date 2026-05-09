@@ -72,8 +72,11 @@ enum VoiceCatalog {
     ]
 
     /// Default base URL the Piper install script binds to.
-    /// (Convention: install-piper-jarvis.sh runs piper on :10200.)
-    static let piperBaseURL = "http://localhost:10200/v1"
+    /// `install-piper-jarvis.sh` runs `openedai-speech` on 127.0.0.1:8001
+    /// (deliberately not :10200 — that's Piper's own HTTP server, which
+    /// isn't OpenAI-compatible; we go through openedai-speech which proxies
+    /// requests to Piper and exposes the OpenAI /v1/audio/speech shape).
+    static let piperBaseURL = "http://127.0.0.1:8001/v1"
 
     // MARK: - macOS built-in `say`
 

@@ -43,11 +43,16 @@ final class SparkleBridge: NSObject {
 
     private func bootstrap() {
         #if canImport(Sparkle)
-        // startingUpdater:true kicks off the periodic background check.
-        // userDriverDelegate / updaterDelegate left nil — defaults are fine
-        // for our use.
+        // Don't start the periodic background updater when the appcast URL
+        // is the shipping placeholder. Sparkle would otherwise immediately
+        // pop a network-error dialog on every cold launch (the placeholder
+        // resolves to example.invalid on purpose so we never accidentally
+        // hit a real domain). When the user wires a real URL this branch
+        // flips and updates start working.
+        let isPlaceholderFeed = appcastURLString.isEmpty
+            || appcastURLString.contains("example.invalid")
         self.updaterController = SPUStandardUpdaterController(
-            startingUpdater: true,
+            startingUpdater: !isPlaceholderFeed,
             updaterDelegate: nil,
             userDriverDelegate: nil
         )

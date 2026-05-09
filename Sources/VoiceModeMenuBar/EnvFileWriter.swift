@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let log = Logger(subsystem: "com.williamruiz.voicemode-monitor", category: "EnvFileWriter")
 
 /// Writes `~/Library/Application Support/VoiceModeMonitor/voicemode-env.sh` —
 /// a shell-sourceable file that exports the TTS env vars the voicemode MCP
@@ -82,7 +85,7 @@ enum EnvFileWriter {
                 writeSayWrapper(voice: settings.voice)
             }
         } catch {
-            NSLog("VoiceMode: failed to write env file: \(error)")
+            log.error("failed to write env file: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -167,7 +170,7 @@ enum EnvFileWriter {
             try body.data(using: .utf8)?.write(to: path, options: .atomic)
             try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
         } catch {
-            NSLog("VoiceMode: failed to write `say` wrapper: \(error)")
+            log.error("failed to write say wrapper: \(error.localizedDescription, privacy: .public)")
         }
     }
 

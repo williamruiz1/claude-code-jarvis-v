@@ -21,6 +21,10 @@ final class MicMonitor {
     }
 
     func start() {
+        // Idempotent: cancel any prior timer so re-calling `start()` doesn't
+        // leak a parallel poller. Previously a re-start would orphan the
+        // first DispatchSourceTimer and the @0.5s poll would double up.
+        timer?.cancel()
         let queue = DispatchQueue(label: "voicemode.mic-monitor", qos: .utility)
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: pollInterval)
@@ -32,6 +36,14 @@ final class MicMonitor {
     func stop() {
         timer?.cancel()
         timer = nil
+    }
+
+    deinit {
+        // DispatchSourceTimer must be explicitly cancelled or it leaks the
+        // backing dispatch source. App-delegate keeps MicMonitor for app
+        // lifetime so this is mostly defensive — but cheap insurance and
+        // catches the future case where someone owns one transiently.
+        timer?.cancel()
     }
 
     private func tick() {

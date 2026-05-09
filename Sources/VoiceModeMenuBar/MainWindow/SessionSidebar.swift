@@ -32,16 +32,27 @@ final class SessionSidebar: NSView {
 
     /// Re-query SessionDiscovery and update the table. Selection is preserved
     /// when the previously selected session is still present.
+    ///
+    /// `SessionDiscovery.listSessions()` shells out to `ps -A` AND runs
+    /// AppleScript against Terminal.app — both can take 100s of ms. Run
+    /// off the main thread so window-open / settings-open / refresh-click
+    /// never freeze the UI.
     func reload() {
         let previousID = selectedSession.map { "\($0.windowID).\($0.tabIndex)" }
-        sessions = sortSessions(SessionDiscovery.listSessions())
-        tableView.reloadData()
-        if let pid = previousID,
-           let idx = sessions.firstIndex(where: { "\($0.windowID).\($0.tabIndex)" == pid }) {
-            tableView.selectRowIndexes(IndexSet(integer: idx), byExtendingSelection: false)
-        } else {
-            // Selection lost — push nil so the host can show the empty state.
-            delegate?.sessionSidebar(self, didSelect: nil)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let fresh = SessionDiscovery.listSessions()
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.sessions = self.sortSessions(fresh)
+                self.tableView.reloadData()
+                if let pid = previousID,
+                   let idx = self.sessions.firstIndex(where: { "\($0.windowID).\($0.tabIndex)" == pid }) {
+                    self.tableView.selectRowIndexes(IndexSet(integer: idx), byExtendingSelection: false)
+                } else {
+                    // Selection lost — push nil so the host can show the empty state.
+                    self.delegate?.sessionSidebar(self, didSelect: nil)
+                }
+            }
         }
     }
 
@@ -92,7 +103,13 @@ final class SessionSidebar: NSView {
         headerLabel.textColor = .secondaryLabelColor
         headerLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let refreshButton = NSButton(image: NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh sessions")!, target: self, action: #selector(refreshClicked))
+        // SF Symbol with safe fallback — if the system can't resolve the symbol
+        // (corrupt symbol caches, missing on a future OS) we'd rather show a
+        // text refresh glyph than crash on window open.
+        let refreshIcon = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh sessions")
+            ?? NSImage(size: .zero)
+        let refreshButton = NSButton(image: refreshIcon, target: self, action: #selector(refreshClicked))
+        if refreshIcon.size == .zero { refreshButton.title = "↻" }
         refreshButton.bezelStyle = .accessoryBar
         refreshButton.isBordered = false
         refreshButton.contentTintColor = .secondaryLabelColor

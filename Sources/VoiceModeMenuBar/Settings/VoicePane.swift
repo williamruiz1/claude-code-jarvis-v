@@ -1,5 +1,8 @@
 import AppKit
 import AVFoundation
+import os
+
+private let log = Logger(subsystem: "com.williamruiz.voicemode-monitor", category: "VoicePane")
 
 /// Settings pane: choose TTS backend (OpenAI / Kokoro / Piper / ElevenLabs /
 /// macOS / Custom), choose / enter the voice ID, and (for ElevenLabs) manage
@@ -308,12 +311,25 @@ final class VoicePane: NSViewController {
     }
 
     private func refreshKeyStatus() {
-        if KeychainHelper.readElevenLabsKey() != nil {
-            apiKeyStatusLabel.stringValue = "Stored in Keychain (service: elevenlabs-api-key)."
-            apiKeyStatusLabel.textColor = .systemGreen
-        } else {
-            apiKeyStatusLabel.stringValue = "No key stored. Voicemode will fail to call ElevenLabs without one."
-            apiKeyStatusLabel.textColor = .systemOrange
+        // Optimistic placeholder so the panel doesn't render with an empty
+        // status line while the background check runs.
+        apiKeyStatusLabel.stringValue = "Checking Keychain…"
+        apiKeyStatusLabel.textColor = .secondaryLabelColor
+        // KeychainHelper.read forks `/usr/bin/security`, which can take 50–
+        // 200 ms (and may show a Keychain prompt on first access). Doing
+        // that on the main thread froze settings-pane open / re-show.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let hasKey = KeychainHelper.readElevenLabsKey() != nil
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if hasKey {
+                    self.apiKeyStatusLabel.stringValue = "Stored in Keychain (service: elevenlabs-api-key)."
+                    self.apiKeyStatusLabel.textColor = .systemGreen
+                } else {
+                    self.apiKeyStatusLabel.stringValue = "No key stored. Voicemode will fail to call ElevenLabs without one."
+                    self.apiKeyStatusLabel.textColor = .systemOrange
+                }
+            }
         }
     }
 
@@ -367,24 +383,35 @@ final class VoicePane: NSViewController {
     @objc private func saveElevenLabsKey() {
         let key = apiKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
-        let ok = KeychainHelper.writeElevenLabsKey(key)
-        // Always clear the field after save attempt — we don't want the
-        // plaintext lingering even in a secure field.
+        // Always clear the field BEFORE awaiting the write — we don't want the
+        // plaintext lingering even in a secure field while we wait on the fork.
         apiKeyField.stringValue = ""
-        if ok {
-            refreshKeyStatus()
-        } else {
-            let alert = NSAlert()
-            alert.messageText = "Couldn't save key"
-            alert.informativeText = "The `security` CLI returned an error. Try again, or run `security add-generic-password -s elevenlabs-api-key -a $USER -w <key> -U` manually."
-            alert.alertStyle = .warning
-            alert.runModal()
+        // Background the keychain write — `security add-generic-password`
+        // forks a process and can prompt the user, neither of which should
+        // happen on the main thread.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let ok = KeychainHelper.writeElevenLabsKey(key)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if ok {
+                    self.refreshKeyStatus()
+                } else {
+                    let alert = NSAlert()
+                    alert.messageText = "Couldn't save key"
+                    alert.informativeText = "The `security` CLI returned an error. Try again, or run `security add-generic-password -s elevenlabs-api-key -a $USER -w <key> -U` manually."
+                    alert.alertStyle = .warning
+                    alert.runModal()
+                }
+            }
         }
     }
 
     @objc private func clearElevenLabsKey() {
-        KeychainHelper.delete(service: KeychainHelper.elevenLabsService, account: KeychainHelper.currentUser)
-        refreshKeyStatus()
+        // Background the delete for the same reason as save — keep main free.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            KeychainHelper.delete(service: KeychainHelper.elevenLabsService, account: KeychainHelper.currentUser)
+            DispatchQueue.main.async { self?.refreshKeyStatus() }
+        }
     }
 
     // MARK: – Test voice

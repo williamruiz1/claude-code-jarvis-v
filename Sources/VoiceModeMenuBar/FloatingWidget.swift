@@ -1,4 +1,7 @@
 import AppKit
+import os
+
+private let log = Logger(subsystem: "com.williamruiz.voicemode-monitor", category: "FloatingWidget")
 
 /// Small always-on-top floating panel showing VoiceMode status + a Start
 /// Voice button. Draggable from anywhere on its background. Hidden via the
@@ -14,6 +17,17 @@ final class FloatingWidget: NSObject {
     private var sessionsButton: NSPopUpButton!
     private let onStart: StartHandler
     private let onOpenMainWindow: StartHandler
+
+    /// Cached session list shown in the pull-down. NSMenu's `menuNeedsUpdate`
+    /// is invoked on the main thread immediately before the menu opens, so
+    /// it cannot block on `SessionDiscovery.listSessions()` (AppleScript +
+    /// `ps -A` fork). Strategy: on `menuWillOpen`, render whatever cache we
+    /// have AND kick off a background refresh that re-renders when fresh data
+    /// arrives. First open shows "Loading…" briefly; subsequent opens are
+    /// instant. Always accessed on the main thread.
+    private var cachedSessions: [ClaudeSession] = []
+    private var hasLoadedSessionsOnce: Bool = false
+    private var pendingMenuRefresh: Bool = false
 
     /// `onStart` fires "+ New voice conversation" picks (existing behavior).
     /// `onOpenMainWindow` fires when the user picks "Open Main Window…" from
@@ -109,8 +123,14 @@ final class FloatingWidget: NSObject {
         sessionsButton.menu?.addItem(titleItem)
         blur.addSubview(sessionsButton)
 
-        // Close (hide) chevron in the corner
-        let closeButton = NSButton(image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "Hide widget")!, target: self, action: #selector(handleCloseTapped))
+        // Close (hide) chevron in the corner. SF Symbols ships "xmark" in every
+        // macOS we support, but the API still returns Optional<NSImage>; if the
+        // symbol ever resolves nil (corrupt system caches) we'd rather show a
+        // text "x" than crash on launch.
+        let closeIcon = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Hide widget")
+            ?? NSImage(size: .zero)
+        let closeButton = NSButton(image: closeIcon, target: self, action: #selector(handleCloseTapped))
+        if closeIcon.size == .zero { closeButton.title = "x" }
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.bezelStyle = .accessoryBar
         closeButton.isBordered = false
@@ -152,6 +172,8 @@ final class FloatingWidget: NSObject {
         // Click an existing session = focus it AND trigger voice. The whole
         // value of the list is the ability to converse with that session;
         // focus-only would be a passive "where did I leave that tab" feature.
+        // `focus` hops to a background queue internally so the menu close
+        // animation stays smooth even if Terminal AppleScript is slow.
         SessionDiscovery.focus(session, andTriggerVoice: true)
     }
 
@@ -199,10 +221,45 @@ extension FloatingWidget: NSWindowDelegate {
 
 extension FloatingWidget: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
+        // CRITICAL: this delegate runs on the main thread immediately before
+        // the menu opens. We MUST NOT call SessionDiscovery.listSessions()
+        // here — it shells out to AppleScript + `ps -A` and takes 100s of ms,
+        // which would freeze the menu open animation.
+        //
+        // Strategy:
+        //   1. Render whatever cached session list we already have. First open
+        //      shows an empty list with a "Loading sessions…" placeholder.
+        //   2. Kick off a background refresh; when it returns, repopulate the
+        //      menu in place. The user usually sees fresh data within a few
+        //      hundred ms after the menu opens — and instantly on every
+        //      subsequent open.
+        renderMenu(menu, sessions: cachedSessions, isLoading: !hasLoadedSessionsOnce)
+        scheduleBackgroundRefresh(for: menu)
+    }
+
+    /// Async refresh of `cachedSessions`. Coalesces concurrent requests so
+    /// repeated menu opens don't pile up AppleScript invocations.
+    private func scheduleBackgroundRefresh(for menu: NSMenu) {
+        if pendingMenuRefresh { return }
+        pendingMenuRefresh = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, weak menu] in
+            let sessions = SessionDiscovery.listSessions()
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.pendingMenuRefresh = false
+                self.cachedSessions = sessions
+                self.hasLoadedSessionsOnce = true
+                // Only repaint if the menu is still open / about to open.
+                if let menu = menu {
+                    self.renderMenu(menu, sessions: sessions, isLoading: false)
+                }
+            }
+        }
+    }
+
+    private func renderMenu(_ menu: NSMenu, sessions: [ClaudeSession], isLoading: Bool) {
         // Preserve the title item (index 0) and rebuild everything below.
         while menu.numberOfItems > 1 { menu.removeItem(at: 1) }
-
-        let sessions = SessionDiscovery.listSessions()
 
         let newSessionItem = NSMenuItem(
             title: "+ New voice conversation",
@@ -250,6 +307,11 @@ extension FloatingWidget: NSMenuDelegate {
                 item.representedObject = session
                 menu.addItem(item)
             }
+        } else if isLoading {
+            menu.addItem(NSMenuItem.separator())
+            let loading = NSMenuItem(title: "Loading sessions…", action: nil, keyEquivalent: "")
+            loading.isEnabled = false
+            menu.addItem(loading)
         } else {
             menu.addItem(NSMenuItem.separator())
             let empty = NSMenuItem(title: "No voice-capable sessions yet", action: nil, keyEquivalent: "")

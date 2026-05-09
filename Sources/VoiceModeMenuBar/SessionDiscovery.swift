@@ -1,5 +1,8 @@
 import Foundation
 import AppKit
+import os
+
+private let log = Logger(subsystem: "com.williamruiz.voicemode-monitor", category: "SessionDiscovery")
 
 /// Status of a Claude Code session as reflected in its terminal title prefix.
 ///
@@ -97,10 +100,20 @@ enum SessionDiscovery {
         return out
         """
 
+        // Caller contract: must NOT be invoked on the main thread.
+        // AppleScript execution + ps fork below can take 100s of ms — running
+        // on main freezes the UI. Internal asserts here so a regression is loud.
+        if Thread.isMainThread {
+            log.error("SessionDiscovery.listSessions called on main thread — UI will freeze. Move to background queue.")
+            assertionFailure("SessionDiscovery.listSessions must be called off the main thread.")
+        }
         guard let appleScript = NSAppleScript(source: script) else { return [] }
         var error: NSDictionary?
         let output = appleScript.executeAndReturnError(&error)
-        if error != nil { return [] }
+        if let error = error {
+            log.error("listSessions AppleScript failed: \(String(describing: error), privacy: .public)")
+            return []
+        }
         guard let raw = output.stringValue, !raw.isEmpty else { return [] }
 
         // Build a TTY → most-recent-claude-PID-start-time map ONCE via a single
@@ -219,8 +232,30 @@ enum SessionDiscovery {
     /// will type the voice trigger phrase after activation (use this only if
     /// you know voice isn't already running in that tab — there's no reliable
     /// way to detect it from the outside).
+    ///
+    /// Hops to a background queue, runs the AppleScript, then calls
+    /// `completion` on the main thread (or invoke without a completion to
+    /// fire-and-forget). Callers from menu actions / table double-clicks can
+    /// invoke this directly without freezing the UI.
+    static func focus(_ session: ClaudeSession,
+                      andTriggerVoice: Bool = false,
+                      completion: ((Bool) -> Void)? = nil) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ok = focusBlocking(session, andTriggerVoice: andTriggerVoice)
+            if let completion = completion {
+                DispatchQueue.main.async { completion(ok) }
+            }
+        }
+    }
+
+    /// Synchronous variant. Asserts when called on the main thread — use the
+    /// async `focus` from UI actions. Exposed for tests / programmatic callers.
     @discardableResult
-    static func focus(_ session: ClaudeSession, andTriggerVoice: Bool = false) -> Bool {
+    static func focusBlocking(_ session: ClaudeSession, andTriggerVoice: Bool = false) -> Bool {
+        if Thread.isMainThread {
+            log.error("SessionDiscovery.focusBlocking called on main thread — UI will freeze.")
+            assertionFailure("SessionDiscovery.focusBlocking must be called off the main thread.")
+        }
         let voiceTrigger = andTriggerVoice
             ? """
               delay 0.4
@@ -247,6 +282,9 @@ enum SessionDiscovery {
         guard let s = NSAppleScript(source: script) else { return false }
         var error: NSDictionary?
         let result = s.executeAndReturnError(&error)
+        if let error = error {
+            log.error("focus AppleScript failed: \(String(describing: error), privacy: .public)")
+        }
         return result.stringValue == "OK"
     }
 }

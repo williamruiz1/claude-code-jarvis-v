@@ -1,4 +1,7 @@
 import AppKit
+import os
+
+private let log = Logger(subsystem: "com.williamruiz.voicemode-monitor", category: "AppDelegate")
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
@@ -139,15 +142,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openClaudeCode() {
         // Open Terminal.app with `claude` running. Uses AppleScript so we don't depend on user shell setup.
+        // Run on background queue — NSAppleScript.executeAndReturnError can take
+        // hundreds of ms (Terminal launch + script bridge); blocking the main
+        // thread freezes the menu-bar pull-down for that whole window.
         let script = """
         tell application "Terminal"
             activate
             do script "claude"
         end tell
         """
-        let appleScript = NSAppleScript(source: script)
-        var error: NSDictionary?
-        appleScript?.executeAndReturnError(&error)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let appleScript = NSAppleScript(source: script)
+            var error: NSDictionary?
+            appleScript?.executeAndReturnError(&error)
+            if let error = error {
+                log.error("openClaudeCode AppleScript failed: \(String(describing: error), privacy: .public)")
+                DispatchQueue.main.async { self?.showAccessibilityHintIfNeeded(error: error) }
+            }
+        }
     }
 
     @objc func startVoiceConversation() {
@@ -160,6 +172,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // sourcing ~/Library/Application Support/VoiceModeMonitor/voicemode-env.sh and
         // injecting any keychain-stored secrets at server-launch time. So the bare
         // `claude` command is sufficient — we don't need to manage env here.
+        //
+        // The 3-second `delay` inside the script means the AppleScript itself
+        // takes 3+ seconds to return — running it on the main thread froze the
+        // menu/widget for the duration. Off-main here.
         let script = """
         tell application "Terminal"
             activate
@@ -174,12 +190,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             keystroke return
         end tell
         """
-        let appleScript = NSAppleScript(source: script)
-        var error: NSDictionary?
-        appleScript?.executeAndReturnError(&error)
-        if let error = error {
-            DispatchQueue.main.async { [weak self] in
-                self?.showAccessibilityHintIfNeeded(error: error)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let appleScript = NSAppleScript(source: script)
+            var error: NSDictionary?
+            appleScript?.executeAndReturnError(&error)
+            if let error = error {
+                log.error("startVoiceConversation AppleScript failed: \(String(describing: error), privacy: .public)")
+                DispatchQueue.main.async { self?.showAccessibilityHintIfNeeded(error: error) }
             }
         }
     }

@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VibeDispatcher × Claude Code Jarvis V — Synergy Map</title>
+<style>
+:root {
+    --bg: #14141a;
+    --panel: #1c1c25;
+    --text: #e8e6e0;
+    --text-muted: #9a988e;
+    --vd: #4a8db8;
+    --vd-fill: rgba(74, 141, 184, 0.18);
+    --vd-stroke: rgba(74, 141, 184, 0.55);
+    --ccjv: #e89a3f;
+    --ccjv-fill: rgba(232, 154, 63, 0.20);
+    --ccjv-stroke: rgba(232, 154, 63, 0.65);
+    --overlap-fill: rgba(186, 136, 100, 0.30);
+    --border: rgba(255, 255, 255, 0.08);
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0; padding: 32px 24px;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+    font-size: 13px; line-height: 1.5;
+}
+h1 {
+    font-size: 22px; font-weight: 600; letter-spacing: 0.3px;
+    margin: 0 0 4px 0;
+}
+.subtitle {
+    color: var(--text-muted); font-size: 12px; margin-bottom: 24px;
+}
+.legend {
+    display: flex; gap: 24px; margin-bottom: 16px;
+    font-size: 11px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.8px;
+}
+.legend-dot {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    margin-right: 6px; vertical-align: middle;
+}
+.venn-wrap {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 24px;
+    overflow-x: auto;
+}
+svg { display: block; margin: 0 auto; }
+
+.venn-text { font-family: -apple-system, "SF Pro Text", system-ui, sans-serif; fill: var(--text); }
+.venn-label-vd { font-size: 17px; font-weight: 700; fill: var(--vd); letter-spacing: 0.5px; }
+.venn-label-ccjv { font-size: 17px; font-weight: 700; fill: var(--ccjv); letter-spacing: 0.5px; }
+.venn-label-overlap { font-size: 13px; font-weight: 600; fill: #d8c8a8; letter-spacing: 0.5px; }
+.venn-item { font-size: 11.5px; fill: var(--text); }
+.venn-item-muted { font-size: 11px; fill: var(--text-muted); }
+
+.tier-section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 16px;
+}
+.tier-title {
+    font-size: 14px; font-weight: 600; margin: 0 0 12px 0;
+    display: flex; align-items: center; gap: 10px;
+}
+.tier-pill {
+    font-size: 10px; font-weight: 700;
+    padding: 3px 8px; border-radius: 4px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+}
+.tier-1 .tier-pill { background: rgba(80, 200, 120, 0.22); color: #6fd698; }
+.tier-2 .tier-pill { background: rgba(232, 154, 63, 0.22); color: var(--ccjv); }
+.tier-3 .tier-pill { background: rgba(74, 141, 184, 0.22); color: var(--vd); }
+
+.tier-section ol { margin: 0; padding-left: 20px; }
+.tier-section li { margin-bottom: 6px; color: var(--text); }
+.tier-section li code { color: #b9b8b1; background: rgba(255,255,255,0.05); padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+
+.fineprint {
+    color: var(--text-muted); font-size: 11px; margin-top: 12px;
+    padding-top: 12px; border-top: 1px solid var(--border);
+}
+</style>
+</head>
+<body>
+
+<h1>VibeDispatcher × Claude Code Jarvis V — Synergy Map</h1>
+<div class="subtitle">2026-05-09 · Two voice-control tools across William's coding surfaces. Where they share substrate, where they're unique, and what compounds when you connect them.</div>
+
+<div class="legend">
+    <span><span class="legend-dot" style="background: var(--vd)"></span>VibeDispatcher (VS Code + Mobile Beacon)</span>
+    <span><span class="legend-dot" style="background: var(--ccjv)"></span>Claude Code Jarvis V (Claude Code CLI)</span>
+    <span><span class="legend-dot" style="background: #b88860"></span>Shared / synergy zone</span>
+</div>
+
+<div class="venn-wrap">
+<svg viewBox="0 0 1200 720" width="100%" height="720" xmlns="http://www.w3.org/2000/svg">
+
+    <!-- Background grid pattern (subtle) -->
+    <defs>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255,255,255,0.02)" stroke-width="1"/>
+        </pattern>
+        <radialGradient id="vd-grad" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="rgba(74, 141, 184, 0.30)"/>
+            <stop offset="100%" stop-color="rgba(74, 141, 184, 0.10)"/>
+        </radialGradient>
+        <radialGradient id="ccjv-grad" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="rgba(232, 154, 63, 0.32)"/>
+            <stop offset="100%" stop-color="rgba(232, 154, 63, 0.10)"/>
+        </radialGradient>
+    </defs>
+    <rect width="1200" height="720" fill="url(#grid)"/>
+
+    <!-- The two main circles -->
+    <!-- Cx, Cy chosen for ~30% overlap. Radius ~290. Centers separated by 380px. -->
+    <circle cx="430" cy="360" r="290" fill="url(#vd-grad)" stroke="#4a8db8" stroke-width="1.5" stroke-opacity="0.65"/>
+    <circle cx="770" cy="360" r="290" fill="url(#ccjv-grad)" stroke="#e89a3f" stroke-width="1.5" stroke-opacity="0.65"/>
+
+    <!-- Header labels for each circle -->
+    <text x="240" y="80" class="venn-text venn-label-vd">VibeDispatcher</text>
+    <text x="240" y="100" class="venn-text venn-item-muted">VS Code voice command center</text>
+
+    <text x="900" y="80" class="venn-text venn-label-ccjv" text-anchor="end">Claude Code Jarvis V</text>
+    <text x="900" y="100" class="venn-text venn-item-muted" text-anchor="end">Claude Code CLI voice frontend</text>
+
+    <!-- LEFT-only items (VibeDispatcher unique) -->
+    <text x="200" y="180" class="venn-text venn-item" font-weight="600" fill="#4a8db8">UNIQUE TO VD</text>
+    <text x="200" y="208" class="venn-text venn-item">• Mobile PWA Beacon</text>
+    <text x="200" y="226" class="venn-text venn-item">• Cloud Away Relay (Fly.io)</text>
+    <text x="200" y="244" class="venn-text venn-item">• Push notifications + escalation</text>
+    <text x="200" y="262" class="venn-text venn-item">• VS Code extension + per-workspace IPC</text>
+    <text x="200" y="280" class="venn-text venn-item">• Multi-workspace agent monitor</text>
+    <text x="200" y="298" class="venn-text venn-item">• Workspace-aware command routing (@name)</text>
+    <text x="200" y="316" class="venn-text venn-item">• AI intent routing (Haiku-powered)</text>
+    <text x="200" y="334" class="venn-text venn-item">• Trickle alert queue (6 modes)</text>
+    <text x="200" y="352" class="venn-text venn-item">• Auto-pause / quick-pause / replay</text>
+    <text x="200" y="370" class="venn-text venn-item">• Voice yes/no confirmation flow</text>
+    <text x="200" y="388" class="venn-text venn-item">• Hotkey push-to-talk</text>
+    <text x="200" y="406" class="venn-text venn-item">• Media key voice toggle</text>
+    <text x="200" y="424" class="venn-text venn-item">• macOS notification observer</text>
+    <text x="200" y="442" class="venn-text venn-item">• User activity tracking</text>
+    <text x="200" y="460" class="venn-text venn-item">• Notification summarization (Haiku)</text>
+
+    <!-- RIGHT-only items (CCJV unique) -->
+    <text x="1000" y="180" class="venn-text venn-item" font-weight="600" fill="#e89a3f" text-anchor="end">UNIQUE TO CCJV</text>
+    <text x="1000" y="208" class="venn-text venn-item" text-anchor="end">JARVIS voice install (Piper + Marvel model) •</text>
+    <text x="1000" y="226" class="venn-text venn-item" text-anchor="end">openedai-speech LaunchAgent on :8001 •</text>
+    <text x="1000" y="244" class="venn-text venn-item" text-anchor="end">Claude Code CLI integration •</text>
+    <text x="1000" y="262" class="venn-text venn-item" text-anchor="end">MCP wrapper for env injection •</text>
+    <text x="1000" y="280" class="venn-text venn-item" text-anchor="end">Live transcript pane (minimal/chrome) •</text>
+    <text x="1000" y="298" class="venn-text venn-item" text-anchor="end">End-of-session report generator •</text>
+    <text x="1000" y="316" class="venn-text venn-item" text-anchor="end">Brand wordmark + amber accent system •</text>
+    <text x="1000" y="334" class="venn-text venn-item" text-anchor="end">Voice catalog (5 backends, 30+ voices) •</text>
+    <text x="1000" y="352" class="venn-text venn-item" text-anchor="end">Sparkle auto-update wired •</text>
+    <text x="1000" y="370" class="venn-text venn-item" text-anchor="end">Terminal.app session badge parsing •</text>
+    <text x="1000" y="388" class="venn-text venn-item" text-anchor="end">Hallucination detector (modular) •</text>
+    <text x="1000" y="406" class="venn-text venn-item" text-anchor="end">Voice "test" button per backend •</text>
+    <text x="1000" y="424" class="venn-text venn-item" text-anchor="end">Production hardening audit (17 findings) •</text>
+    <text x="1000" y="442" class="venn-text venn-item" text-anchor="end">Floating widget v2 (300×100) •</text>
+    <text x="1000" y="460" class="venn-text venn-item" text-anchor="end">Quick voice picker (6 favorites) •</text>
+
+    <!-- OVERLAP — shared primitives -->
+    <text x="600" y="200" class="venn-text venn-label-overlap" text-anchor="middle">SHARED SUBSTRATE</text>
+    <text x="600" y="218" class="venn-text venn-item-muted" text-anchor="middle">— extract these into shared SPM packages —</text>
+
+    <text x="600" y="262" class="venn-text venn-item" text-anchor="middle">macOS menu-bar status item</text>
+    <text x="600" y="282" class="venn-text venn-item" text-anchor="middle">Multi-backend TTS (Piper / ElevenLabs / say)</text>
+    <text x="600" y="302" class="venn-text venn-item" text-anchor="middle">Multi-backend STT (Whisper local / cloud)</text>
+    <text x="600" y="322" class="venn-text venn-item" text-anchor="middle">Whisper hallucination filter</text>
+    <text x="600" y="342" class="venn-text venn-item" text-anchor="middle">NSPanel HUD floating widget</text>
+    <text x="600" y="362" class="venn-text venn-item" text-anchor="middle">macOS Keychain API-key storage</text>
+    <text x="600" y="382" class="venn-text venn-item" text-anchor="middle">JSON-file-polling IPC pattern</text>
+    <text x="600" y="402" class="venn-text venn-item" text-anchor="middle">Voice settings persistence</text>
+    <text x="600" y="422" class="venn-text venn-item" text-anchor="middle">Session/agent discovery</text>
+    <text x="600" y="442" class="venn-text venn-item" text-anchor="middle">Trigger phrase / push-to-talk</text>
+
+    <!-- Bottom synergy callout -->
+    <line x1="100" y1="580" x2="1100" y2="580" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+    <text x="600" y="612" class="venn-text" text-anchor="middle" font-size="13" font-weight="600" fill="#d8c8a8">CONNECT THE TWO →</text>
+    <text x="600" y="632" class="venn-text venn-item-muted" text-anchor="middle">CCJV transcripts → VD mobile Beacon (CCJV gets away/mobile read for free)</text>
+    <text x="600" y="650" class="venn-text venn-item-muted" text-anchor="middle">CCJV's session discovery → VD's workspace list (unified agent view)</text>
+    <text x="600" y="668" class="venn-text venn-item-muted" text-anchor="middle">VD's intent router → CCJV's voice trigger ("switch to Jarvis voice", "open Marginalia tab")</text>
+    <text x="600" y="686" class="venn-text venn-item-muted" text-anchor="middle">CCJV's MCP-Keychain wrapper pattern → VD's API key handling (closes VD's audit C2 finding)</text>
+
+</svg>
+</div>
+
+<div class="tier-section tier-1">
+    <h2 class="tier-title"><span class="tier-pill">Tier 1</span>High value, low effort — do these first</h2>
+    <ol>
+        <li>Extract <code>KeychainHelper</code> + <code>HallucinationDetector</code> into a shared SPM package (~1 day) — both products depend on it; closes VD's flat-file-API-key security finding (Regression Report C2)</li>
+        <li>CCJV publishes voice events to VD's relay → mobile Beacon surfaces CCJV transcripts (~1-2 days) — CCJV gets away/mobile read for free</li>
+    </ol>
+</div>
+
+<div class="tier-section tier-2">
+    <h2 class="tier-title"><span class="tier-pill">Tier 2</span>Medium value, medium effort</h2>
+    <ol>
+        <li>Shared <code>VoiceCatalog</code> SPM package — single source of truth for voice/backend definitions (~3-5 days)</li>
+        <li>VD's <code>TerminalMonitor</code> enriched with CCJV's badge-parsing for unified non-VS-Code agent surfacing (~2 days)</li>
+    </ol>
+</div>
+
+<div class="tier-section tier-3">
+    <h2 class="tier-title"><span class="tier-pill">Tier 3</span>High value, big build</h2>
+    <ol>
+        <li>Shared NSPanel HUD framework + brand kit + intent router (~1-2 weeks) — ties both products together visually + functionally; positions for the third menu-bar app you'll inevitably ship</li>
+    </ol>
+</div>
+
+<div class="fineprint">
+    Anti-pattern to avoid: merging the two products. Different surface targets (VS Code vs Claude Code CLI), different mental models (alert-triage vs character-driven voice). The win is shared substrate + cross-publishing, not consolidation.
+    <br><br>
+    Full written analysis: <code>docs/comparison/vibedispatcher-vs-jarvis-v.md</code> · Sources: <code>~/code/vibedispatcher/docs/architecture.md</code>, <code>~/code/voicemode-menubar/Sources/VoiceModeMenuBar/</code>
+</div>
+
+</body>
+</html>

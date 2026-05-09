@@ -47,12 +47,12 @@
          An empty value means "no signature verification" (insecure; only
          acceptable while testing). See README → Sparkle appcast publishing. -->
     <key>SUFeedURL</key>
-    <string>https://example.invalid/voicemode-menubar/appcast.xml</string>
+    <string>https://williamruiz1.github.io/claude-code-jarvis-v/appcast.xml</string>
     <key>SUEnableAutomaticChecks</key>
     <true/>
     <key>SUScheduledCheckInterval</key>
     <integer>86400</integer>
     <key>SUPublicEDKey</key>
-    <string></string>
+    <string>bwhIJSEHduHzNpKXMcqjByRp+hylFX8InGo1DjhtQK4=</string>
 </dict>
 </plist>

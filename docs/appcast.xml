@@ -1,0 +1,9 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0">
+    <channel>
+        <title>VoiceMode Monitor</title>
+        <link>https://williamruiz1.github.io/claude-code-jarvis-v/appcast.xml</link>
+        <description>Sparkle update feed for VoiceMode Monitor. No releases published yet.</description>
+        <language>en</language>
+    </channel>
+</rss>

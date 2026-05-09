@@ -339,7 +339,9 @@ final class VoicePane: NSViewController {
         NotificationCenter.default.post(name: .voiceSettingsDidChange, object: nil)
     }
 
-    private func setTestStatus(_ s: String, color: NSColor = .secondaryLabelColor) {
+    /// `nonisolated` because callers may be off-main (background queues,
+    /// detached Tasks). The body marshals to main internally.
+    nonisolated private func setTestStatus(_ s: String, color: NSColor = .secondaryLabelColor) {
         DispatchQueue.main.async {
             self.testStatusLabel.stringValue = s
             self.testStatusLabel.textColor = color
@@ -425,14 +427,23 @@ final class VoicePane: NSViewController {
         let backend = settings.backend
         let voice = settings.voice
         let sample = VoiceCatalog.sampleSentence
+        let customBase = settings.customBaseURL
+        let customModel = settings.customModel
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            defer { DispatchQueue.main.async { self?.testButton.isEnabled = true } }
+        // The HTTP backends use `URLSession`'s async API; the macOS `say` path
+        // is still a synchronous `Process` call. Run both inside a detached
+        // Task so we stay off the main thread, and re-enable the test button
+        // on the main thread no matter which path returns.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            defer {
+                Task { @MainActor [weak self] in self?.testButton.isEnabled = true }
+            }
+            guard let self = self else { return }
             switch backend {
             case .macos:
-                self?.runSay(voice: voice, text: sample)
+                self.runSay(voice: voice, text: sample)
             case .openai:
-                self?.fetchAndPlayOpenAILike(
+                await self.fetchAndPlayOpenAILike(
                     baseURL: "https://api.openai.com/v1",
                     voice: voice,
                     model: "tts-1",
@@ -440,7 +451,7 @@ final class VoicePane: NSViewController {
                     apiKeyService: "openai-api-key"
                 )
             case .kokoro:
-                self?.fetchAndPlayOpenAILike(
+                await self.fetchAndPlayOpenAILike(
                     baseURL: VoiceCatalog.kokoroBaseURL,
                     voice: voice,
                     model: "kokoro",
@@ -448,7 +459,7 @@ final class VoicePane: NSViewController {
                     apiKeyService: nil
                 )
             case .piper:
-                self?.fetchAndPlayOpenAILike(
+                await self.fetchAndPlayOpenAILike(
                     baseURL: VoiceCatalog.piperBaseURL,
                     voice: voice,
                     model: "piper",
@@ -457,21 +468,19 @@ final class VoicePane: NSViewController {
                 )
             case .elevenlabs:
                 if voice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    self?.setTestStatus("Enter an ElevenLabs voice ID first.", color: .systemOrange)
+                    self.setTestStatus("Enter an ElevenLabs voice ID first.", color: .systemOrange)
                     return
                 }
-                self?.fetchAndPlayElevenLabs(voiceID: voice, text: sample)
+                await self.fetchAndPlayElevenLabs(voiceID: voice, text: sample)
             case .custom:
-                let base = self?.settings.customBaseURL ?? ""
-                let model = self?.settings.customModel ?? ""
-                if base.isEmpty {
-                    self?.setTestStatus("Set a Custom Base URL first.", color: .systemOrange)
+                if customBase.isEmpty {
+                    self.setTestStatus("Set a Custom Base URL first.", color: .systemOrange)
                     return
                 }
-                self?.fetchAndPlayOpenAILike(
-                    baseURL: base,
+                await self.fetchAndPlayOpenAILike(
+                    baseURL: customBase,
                     voice: voice,
-                    model: model.isEmpty ? "tts-1" : model,
+                    model: customModel.isEmpty ? "tts-1" : customModel,
                     text: sample,
                     apiKeyService: nil
                 )
@@ -480,8 +489,10 @@ final class VoicePane: NSViewController {
     }
 
     /// macOS `say -v <voice> <text>`. Runs synchronously on the calling
-    /// queue (already a background queue). Reports availability errors.
-    private func runSay(voice: String, text: String) {
+    /// queue (already a background context). Reports availability errors.
+    /// `nonisolated` so the caller can stay off-main — `waitUntilExit()` would
+    /// freeze the UI if this hopped to MainActor.
+    nonisolated private func runSay(voice: String, text: String) {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/say")
         task.arguments = ["-v", voice, text]
@@ -516,7 +527,7 @@ final class VoicePane: NSViewController {
         model: String,
         text: String,
         apiKeyService: String?
-    ) {
+    ) async {
         guard let url = URL(string: baseURL.trimmingCharacters(in: .whitespaces) + "/audio/speech") else {
             setTestStatus("Invalid base URL: \(baseURL)", color: .systemRed)
             return
@@ -538,37 +549,31 @@ final class VoicePane: NSViewController {
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        let sem = DispatchSemaphore(value: 0)
-        var data: Data?
-        var http: HTTPURLResponse?
-        var err: Error?
-        URLSession.shared.dataTask(with: req) { d, r, e in
-            data = d; http = r as? HTTPURLResponse; err = e
-            sem.signal()
-        }.resume()
-        sem.wait()
-
-        if let err = err {
-            setTestStatus("Network error: \(err.localizedDescription)", color: .systemRed)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: req)
+        } catch {
+            setTestStatus("Network error: \(error.localizedDescription)", color: .systemRed)
             return
         }
-        guard let http = http else {
+        guard let http = response as? HTTPURLResponse else {
             setTestStatus("No HTTP response.", color: .systemRed)
             return
         }
-        guard (200..<300).contains(http.statusCode), let audio = data, !audio.isEmpty else {
-            let body = (data.flatMap { String(data: $0, encoding: .utf8) } ?? "").prefix(200)
-            setTestStatus("HTTP \(http.statusCode) from \(url.host ?? "server"). \(body)", color: .systemRed)
+        guard (200..<300).contains(http.statusCode), !data.isEmpty else {
+            let bodyExcerpt = (String(data: data, encoding: .utf8) ?? "").prefix(200)
+            setTestStatus("HTTP \(http.statusCode) from \(url.host ?? "server"). \(bodyExcerpt)", color: .systemRed)
             return
         }
-        playAudio(audio)
-        setTestStatus("Played \(audio.count) bytes from \(url.host ?? baseURL).", color: .systemGreen)
+        playAudio(data)
+        setTestStatus("Played \(data.count) bytes from \(url.host ?? baseURL).", color: .systemGreen)
     }
 
     /// ElevenLabs has a non-OpenAI shape. POST
     /// `https://api.elevenlabs.io/v1/text-to-speech/<voice_id>` with the
     /// `xi-api-key` header (NOT `Authorization: Bearer`). Returns audio/mpeg.
-    private func fetchAndPlayElevenLabs(voiceID: String, text: String) {
+    private func fetchAndPlayElevenLabs(voiceID: String, text: String) async {
         guard let url = URL(string: "https://api.elevenlabs.io/v1/text-to-speech/\(voiceID)") else {
             setTestStatus("Invalid voice ID for URL.", color: .systemRed)
             return
@@ -589,31 +594,25 @@ final class VoicePane: NSViewController {
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        let sem = DispatchSemaphore(value: 0)
-        var data: Data?
-        var http: HTTPURLResponse?
-        var err: Error?
-        URLSession.shared.dataTask(with: req) { d, r, e in
-            data = d; http = r as? HTTPURLResponse; err = e
-            sem.signal()
-        }.resume()
-        sem.wait()
-
-        if let err = err {
-            setTestStatus("Network error: \(err.localizedDescription)", color: .systemRed)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: req)
+        } catch {
+            setTestStatus("Network error: \(error.localizedDescription)", color: .systemRed)
             return
         }
-        guard let http = http else {
+        guard let http = response as? HTTPURLResponse else {
             setTestStatus("No HTTP response from ElevenLabs.", color: .systemRed)
             return
         }
-        guard (200..<300).contains(http.statusCode), let audio = data, !audio.isEmpty else {
-            let body = (data.flatMap { String(data: $0, encoding: .utf8) } ?? "").prefix(200)
-            setTestStatus("ElevenLabs HTTP \(http.statusCode). \(body)", color: .systemRed)
+        guard (200..<300).contains(http.statusCode), !data.isEmpty else {
+            let bodyExcerpt = (String(data: data, encoding: .utf8) ?? "").prefix(200)
+            setTestStatus("ElevenLabs HTTP \(http.statusCode). \(bodyExcerpt)", color: .systemRed)
             return
         }
-        playAudio(audio)
-        setTestStatus("Played \(audio.count) bytes from ElevenLabs.", color: .systemGreen)
+        playAudio(data)
+        setTestStatus("Played \(data.count) bytes from ElevenLabs.", color: .systemGreen)
     }
 
     private func playAudio(_ data: Data) {

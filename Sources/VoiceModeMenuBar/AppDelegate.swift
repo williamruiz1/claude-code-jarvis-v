@@ -25,7 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Floating widget — primary surface.
         widget = FloatingWidget(
             onStart: { [weak self] in self?.startVoiceConversation() },
-            onOpenMainWindow: { [weak self] in self?.showMainWindow() }
+            onOpenMainWindow: { [weak self] in self?.showMainWindow() },
+            onOpenSettings: { [weak self] in self?.showSettings() }
         )
         widget.show()
 

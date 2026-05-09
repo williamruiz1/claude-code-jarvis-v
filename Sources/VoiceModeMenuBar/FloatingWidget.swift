@@ -9,14 +9,21 @@ private let log = Logger(subsystem: "com.williamruiz.voicemode-monitor", categor
 final class FloatingWidget: NSObject {
     typealias StartHandler = () -> Void
 
-    private static let frameDefaultsKey = "voicemode-monitor.widget.frame"
+    /// Bumped key forces a one-time reset of the saved widget frame when the
+    /// widget grows in size (e.g. v1 → v2 layout adding the toggle row).
+    /// Saved frames keyed under prior names are left in UserDefaults but are
+    /// no longer read; this is harmless drift that tidies on next save.
+    private static let frameDefaultsKey = "voicemode-monitor.widget.frame.v2"
 
     private var panel: NSPanel?
     private var iconView: NSImageView!
     private var statusLabel: NSTextField!
     private var sessionsButton: NSPopUpButton!
+    private var voicePicker: WidgetVoicePicker?
+    private var toggleBar: WidgetToggleBar?
     private let onStart: StartHandler
     private let onOpenMainWindow: StartHandler
+    private let onOpenSettings: StartHandler
 
     /// Cached session list shown in the pull-down. NSMenu's `menuNeedsUpdate`
     /// is invoked on the main thread immediately before the menu opens, so
@@ -31,12 +38,15 @@ final class FloatingWidget: NSObject {
 
     /// `onStart` fires "+ New voice conversation" picks (existing behavior).
     /// `onOpenMainWindow` fires when the user picks "Open Main Window…" from
-    /// the widget's session menu — added as a second entry point so users
-    /// who live in the floating widget don't need to chase the menu-bar item.
+    /// the widget's session menu OR clicks the toolbar button on the toggle row.
+    /// `onOpenSettings` fires when the user picks "More voices…" from the
+    /// quick voice picker on the widget.
     init(onStart: @escaping StartHandler,
-         onOpenMainWindow: @escaping StartHandler = {}) {
+         onOpenMainWindow: @escaping StartHandler = {},
+         onOpenSettings: @escaping StartHandler = {}) {
         self.onStart = onStart
         self.onOpenMainWindow = onOpenMainWindow
+        self.onOpenSettings = onOpenSettings
         super.init()
     }
 
@@ -59,10 +69,18 @@ final class FloatingWidget: NSObject {
         let config = NSImage.SymbolConfiguration(pointSize: 22, weight: .medium)
         if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?.withSymbolConfiguration(config) {
             iconView.image = image
-            iconView.contentTintColor = active ? .systemRed : .secondaryLabelColor
+            iconView.contentTintColor = active ? BrandingTheme.activeColor : BrandingTheme.idleColor
         }
         statusLabel.stringValue = active ? "Listening" : "Idle"
-        statusLabel.textColor = active ? .systemRed : .secondaryLabelColor
+        statusLabel.textColor = active ? BrandingTheme.activeColor : BrandingTheme.idleColor
+
+        // Animate the icon: gentle breathing while idle, sharper pulse while active.
+        BrandingTheme.removeAnimations(from: iconView)
+        if active {
+            BrandingTheme.applyActivePulse(to: iconView)
+        } else {
+            BrandingTheme.applyIdleBreath(to: iconView)
+        }
     }
 
     private func buildPanel() {
@@ -137,18 +155,52 @@ final class FloatingWidget: NSObject {
         closeButton.contentTintColor = .tertiaryLabelColor
         blur.addSubview(closeButton)
 
+        // Wordmark — small "JARVIS-V" brand label, top-left.
+        let wordmark = BrandingTheme.WordmarkView()
+        wordmark.translatesAutoresizingMaskIntoConstraints = false
+        blur.addSubview(wordmark)
+
+        // Voice quick-pick — short list of favorite voices. "More voices…" opens
+        // the full Settings → Voice pane via the onOpenSettings callback.
+        let picker = WidgetVoicePicker()
+        picker.translatesAutoresizingMaskIntoConstraints = false
+        picker.onOpenSettings = { [weak self] in self?.onOpenSettings() }
+        blur.addSubview(picker)
+        self.voicePicker = picker
+
+        // Toggle bar — transcript Min|Full + Stop voice + Open main window.
+        let bar = WidgetToggleBar()
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bar.onOpenMainWindow = { [weak self] in self?.onOpenMainWindow() }
+        blur.addSubview(bar)
+        self.toggleBar = bar
+
         NSLayoutConstraint.activate([
+            // Top row — wordmark | icon + status | sessions popup
+            wordmark.topAnchor.constraint(equalTo: blur.topAnchor, constant: 8),
+            wordmark.leadingAnchor.constraint(equalTo: blur.leadingAnchor, constant: 14),
+
+            iconView.topAnchor.constraint(equalTo: wordmark.bottomAnchor, constant: 4),
             iconView.leadingAnchor.constraint(equalTo: blur.leadingAnchor, constant: 14),
-            iconView.centerYAnchor.constraint(equalTo: blur.centerYAnchor),
             iconView.widthAnchor.constraint(equalToConstant: 26),
             iconView.heightAnchor.constraint(equalToConstant: 26),
 
             statusLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 10),
-            statusLabel.centerYAnchor.constraint(equalTo: blur.centerYAnchor),
+            statusLabel.centerYAnchor.constraint(equalTo: iconView.centerYAnchor),
 
             sessionsButton.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -14),
-            sessionsButton.centerYAnchor.constraint(equalTo: blur.centerYAnchor),
+            sessionsButton.centerYAnchor.constraint(equalTo: iconView.centerYAnchor),
 
+            // Middle row — voice picker, left of toggle bar
+            picker.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 8),
+            picker.leadingAnchor.constraint(equalTo: blur.leadingAnchor, constant: 14),
+
+            // Toggle bar to the right of picker
+            bar.centerYAnchor.constraint(equalTo: picker.centerYAnchor),
+            bar.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -14),
+            bar.leadingAnchor.constraint(greaterThanOrEqualTo: picker.trailingAnchor, constant: 8),
+
+            // Close X — top-right, untouched
             closeButton.topAnchor.constraint(equalTo: blur.topAnchor, constant: 4),
             closeButton.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -4),
             closeButton.widthAnchor.constraint(equalToConstant: 16),
@@ -199,7 +251,7 @@ final class FloatingWidget: NSObject {
 
     private func defaultFrame() -> NSRect {
         // Default: top-right corner of the main screen, 16pt inset from edges, below menu bar.
-        let size = NSSize(width: 240, height: 56)
+        let size = NSSize(width: 300, height: 100)
         if let visible = NSScreen.main?.visibleFrame {
             return NSRect(
                 x: visible.maxX - size.width - 16,

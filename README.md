@@ -1,3 +1,14 @@
+> ## ⚠️ This project has been absorbed into VibeDispatcher
+>
+> As of May 2026, all functionality from Claude Code Jarvis V (CCJV) is now part of [**VibeDispatcher**](https://github.com/williamruiz1/vibedispatcher). VibeDispatcher v2.0+ contains everything CCJV did and more — voice picker, Atlas voice (rebranded from JARVIS to dodge trademark exposure), transcript pane, hallucination filter, MCP wrapper pattern — plus VS Code workspace voice + the Beacon mobile app.
+>
+> **Install VibeDispatcher** at https://github.com/williamruiz1/vibedispatcher.
+>
+> This repo is preserved for history. The migration audit is at [`docs/migration/audit-2026-05-09.md`](docs/migration/audit-2026-05-09.md).
+>
+> ---
+>
+
 # VoiceMode Monitor
 
 macOS menu-bar companion for [VoiceMode](https://github.com/mbailey/voicemode) running inside Claude Code. Tracks the system mic, lists Claude sessions, lets you pick a TTS voice, and shows transcripts.

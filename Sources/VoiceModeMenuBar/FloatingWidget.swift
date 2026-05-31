@@ -10,10 +10,11 @@ final class FloatingWidget: NSObject {
     typealias StartHandler = () -> Void
 
     /// Bumped key forces a one-time reset of the saved widget frame when the
-    /// widget grows in size (e.g. v1 → v2 layout adding the toggle row).
+    /// widget grows in size (e.g. v1 → v2 layout adding the toggle row;
+    /// v3 adds the convomode queue panel + control strip).
     /// Saved frames keyed under prior names are left in UserDefaults but are
     /// no longer read; this is harmless drift that tidies on next save.
-    private static let frameDefaultsKey = "voicemode-monitor.widget.frame.v2"
+    private static let frameDefaultsKey = "voicemode-monitor.widget.frame.v3"
 
     private var panel: NSPanel?
     private var iconView: NSImageView!
@@ -21,6 +22,16 @@ final class FloatingWidget: NSObject {
     private var sessionsButton: NSPopUpButton!
     private var voicePicker: WidgetVoicePicker?
     private var toggleBar: WidgetToggleBar?
+    private var queuePanel: WidgetQueuePanel?
+    private var controlStrip: WidgetControlStrip?
+
+    /// Wired by the owner (AppDelegate) so the control strip's 🎙 Mute button
+    /// can flip the device mute property. Set BEFORE `show()` so the strip
+    /// picks it up at build time.
+    var muteSentinel: MuteSentinel? {
+        didSet { controlStrip?.muteSentinel = muteSentinel }
+    }
+
     private let onStart: StartHandler
     private let onOpenMainWindow: StartHandler
     private let onOpenSettings: StartHandler
@@ -175,6 +186,27 @@ final class FloatingWidget: NSObject {
         blur.addSubview(bar)
         self.toggleBar = bar
 
+        // Convomode queue divider — separates the voice controls (above) from
+        // the floor-control queue surface (below).
+        let queueDivider = NSView()
+        queueDivider.translatesAutoresizingMaskIntoConstraints = false
+        queueDivider.wantsLayer = true
+        queueDivider.layer?.backgroundColor = NSColor(srgbRed: 0x33/255, green: 0x41/255, blue: 0x5c/255, alpha: 1).cgColor
+        blur.addSubview(queueDivider)
+
+        // Convomode queue panel — the live floor queue (holder + waiters).
+        let queue = WidgetQueuePanel()
+        queue.translatesAutoresizingMaskIntoConstraints = false
+        blur.addSubview(queue)
+        self.queuePanel = queue
+
+        // Control strip — Mute / Advance / Pause-Proceed (the gesture twins).
+        let strip = WidgetControlStrip()
+        strip.translatesAutoresizingMaskIntoConstraints = false
+        strip.muteSentinel = muteSentinel
+        blur.addSubview(strip)
+        self.controlStrip = strip
+
         NSLayoutConstraint.activate([
             // Top row — wordmark | icon + status | sessions popup
             wordmark.topAnchor.constraint(equalTo: blur.topAnchor, constant: 8),
@@ -199,6 +231,21 @@ final class FloatingWidget: NSObject {
             bar.centerYAnchor.constraint(equalTo: picker.centerYAnchor),
             bar.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -14),
             bar.leadingAnchor.constraint(greaterThanOrEqualTo: picker.trailingAnchor, constant: 8),
+
+            // --- Convomode queue surface (below the existing rows) ---
+            queueDivider.topAnchor.constraint(equalTo: picker.bottomAnchor, constant: 10),
+            queueDivider.leadingAnchor.constraint(equalTo: blur.leadingAnchor, constant: 12),
+            queueDivider.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -12),
+            queueDivider.heightAnchor.constraint(equalToConstant: 1),
+
+            queue.topAnchor.constraint(equalTo: queueDivider.bottomAnchor, constant: 8),
+            queue.leadingAnchor.constraint(equalTo: blur.leadingAnchor, constant: 8),
+            queue.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -8),
+
+            strip.topAnchor.constraint(equalTo: queue.bottomAnchor, constant: 8),
+            strip.leadingAnchor.constraint(equalTo: blur.leadingAnchor, constant: 12),
+            strip.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -12),
+            strip.bottomAnchor.constraint(equalTo: blur.bottomAnchor, constant: -12),
 
             // Close X — top-right, untouched
             closeButton.topAnchor.constraint(equalTo: blur.topAnchor, constant: 4),

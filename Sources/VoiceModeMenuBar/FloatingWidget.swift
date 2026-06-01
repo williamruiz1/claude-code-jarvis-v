@@ -24,6 +24,7 @@ final class FloatingWidget: NSObject {
     private var toggleBar: WidgetToggleBar?
     private var queuePanel: WidgetQueuePanel?
     private var controlStrip: WidgetControlStrip?
+    private var floorStore: FloorQueueStore?
 
     /// Wired by the owner (AppDelegate) so the control strip's 🎙 Mute button
     /// can flip the device mute property. Set BEFORE `show()` so the strip
@@ -206,6 +207,21 @@ final class FloatingWidget: NSObject {
         strip.muteSentinel = muteSentinel
         blur.addSubview(strip)
         self.controlStrip = strip
+
+        // Live feed — pipe floor-queue.json + mute-state.json snapshots into the
+        // panel + strip (this was the missing wire: the panel was never fed).
+        let store = FloorQueueStore { [weak self] snap in
+            guard let self = self else { return }
+            self.queuePanel?.update(snapshot: snap, sessions: self.cachedSessions)
+            self.controlStrip?.update(snapshot: snap)
+        }
+        store.start()
+        self.floorStore = store
+        // Kick a session-name refresh so click-to-jump can map slugs → tabs.
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let sessions = SessionDiscovery.listSessions()
+            DispatchQueue.main.async { self?.cachedSessions = sessions }
+        }
 
         NSLayoutConstraint.activate([
             // Top row — wordmark | icon + status | sessions popup

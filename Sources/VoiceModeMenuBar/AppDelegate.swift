@@ -9,6 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusMenuItem: NSMenuItem!
     private var widget: FloatingWidget!
     private var toggleWidgetItem: NSMenuItem!
+    private var muteSentinel: MuteSentinel!
+    private var gestureTap: GestureTap!
 
     private(set) var mainWindowController: MainWindowController?
     private var settingsWindowController: SettingsWindowController?
@@ -22,13 +24,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Touch SparkleBridge so its background update check kicks off if wired.
         _ = SparkleBridge.shared
 
-        // Floating widget — primary surface.
+        // Convomode mute sentinel — CoreAudio mute-property listener that writes
+        // ~/.voicemode/mute-state.json (+ exposes the settable software-mute).
+        muteSentinel = MuteSentinel()
+        muteSentinel.start()
+
+        // Convomode gesture tap — Next-Track media key → advance intent, gated so
+        // it only consumes the event when a convomode queue exists (>1 participant);
+        // otherwise the key passes through to music. start() requests Input Monitoring.
+        gestureTap = GestureTap(gating: {
+            let p = NSString(string: "~/.voicemode/floor-queue.json").expandingTildeInPath
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: p)),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return (active: false, depth: 0) }
+            let holder = (obj["floor_holder"] is [String: Any]) ? 1 : 0
+            let queued = (obj["queue"] as? [Any])?.count ?? 0
+            return (active: holder > 0, depth: holder + queued)
+        })
+        gestureTap.start()
+
+        // Floating widget — summoned on demand (NOT always present). Show/Hide via
+        // the menu-bar item below, or the widget's own ✕.
         widget = FloatingWidget(
             onStart: { [weak self] in self?.startVoiceConversation() },
             onOpenMainWindow: { [weak self] in self?.showMainWindow() },
             onOpenSettings: { [weak self] in self?.showSettings() }
         )
-        widget.show()
+        widget.muteSentinel = muteSentinel
 
         // Menu bar — secondary surface (toggle widget visibility, About, Quit).
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -44,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openMainItem.target = self
         menu.addItem(openMainItem)
 
-        toggleWidgetItem = NSMenuItem(title: "Hide floating widget", action: #selector(toggleWidget), keyEquivalent: "")
+        toggleWidgetItem = NSMenuItem(title: "Show floating widget", action: #selector(toggleWidget), keyEquivalent: "")
         toggleWidgetItem.target = self
         menu.addItem(toggleWidgetItem)
 

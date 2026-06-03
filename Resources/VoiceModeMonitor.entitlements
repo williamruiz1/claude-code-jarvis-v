@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Required for a hardened-runtime app to send Apple Events (AppleScript) to
+      Terminal.app. Without this entitlement macOS blocks Apple Events outright
+      (error -1743), so SessionDiscovery.listSessions(), startVoiceConversation,
+      and openClaudeCode all silently fail — which left the convomode queue
+      unable to resolve a participant's renamed Terminal title (it fell back to
+      the raw floor slug, e.g. "fleet"). Pairs with NSAppleEventsUsageDescription
+      in Info.plist; the user still grants Automation→Terminal on first use.
+    -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+</dict>
+</plist>

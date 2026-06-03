@@ -332,10 +332,12 @@ final class FloatingWidget: NSObject {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.pendingSessionRefresh = false
-                // Empty + floor active + we had a list = the scan almost certainly
-                // failed (the participants ARE running claude). Keep the good list;
-                // allow a retry on the next snapshot change.
-                if sessions.isEmpty, self.floorStore?.current.isActive == true, !self.cachedSessions.isEmpty {
+                // Empty while the floor is active = the scan failed (participants
+                // ARE live claude sessions, so there's always ≥1 Terminal tab).
+                // Keep whatever cache we have and DON'T record this key — so the
+                // next snapshot change retries. (Recording the key on a failed
+                // empty scan would poison retry and leave names stuck on slugs.)
+                if sessions.isEmpty, self.floorStore?.current.isActive == true {
                     return
                 }
                 self.lastResolveKey = key

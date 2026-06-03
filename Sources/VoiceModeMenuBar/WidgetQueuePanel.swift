@@ -225,9 +225,10 @@ private final class QueueRowView: NSView {
         badgeLabel.font = NSFont.systemFont(ofSize: 9.5, weight: .heavy)
         badgeLabel.alignment = .center
         badgeLabel.wantsLayer = true
-        badgeLabel.layer?.cornerRadius = 4
+        badgeLabel.layer?.cornerRadius = 8
+        badgeLabel.layer?.masksToBounds = true
         badgeLabel.isBezeled = false
-        badgeLabel.drawsBackground = true
+        badgeLabel.drawsBackground = false   // layer provides the rounded pill bg; textfield draws text only — fixes the dark-box render
         badgeLabel.isEditable = false
         addSubview(badgeLabel)
 
@@ -264,16 +265,18 @@ private final class QueueRowView: NSView {
     func configure(badge: Badge, meta: String, dimmed: Bool) {
         metaLabel.stringValue = meta
         alphaValue = dimmed ? 0.5 : 1.0
+        setDotPulsing(false)   // default off; .live re-enables the on-air pulse
 
         switch badge {
         case .live:
-            dot.layer?.backgroundColor = NSColor(srgbRed: 0x48/255, green: 0xd5/255, blue: 0x97/255, alpha: 1.0).cgColor
+            dot.layer?.backgroundColor = NSColor(srgbRed: 0x3f/255, green: 0xe0/255, blue: 0x8f/255, alpha: 1.0).cgColor
+            setDotPulsing(true)   // gentle on-air pulse on the live holder's dot
             badgeLabel.stringValue = " LIVE "
-            badgeLabel.textColor = NSColor(srgbRed: 0x06/255, green: 0x28/255, blue: 0x1c/255, alpha: 1.0)
-            badgeLabel.layer?.backgroundColor = NSColor(srgbRed: 0x48/255, green: 0xd5/255, blue: 0x97/255, alpha: 1.0).cgColor
-            layer?.backgroundColor = NSColor(srgbRed: 0x48/255, green: 0xd5/255, blue: 0x97/255, alpha: 0.10).cgColor
+            badgeLabel.textColor = NSColor(srgbRed: 0x04/255, green: 0x1e/255, blue: 0x13/255, alpha: 1.0)
+            badgeLabel.layer?.backgroundColor = NSColor(srgbRed: 0x3f/255, green: 0xe0/255, blue: 0x8f/255, alpha: 1.0).cgColor
+            layer?.backgroundColor = NSColor(srgbRed: 0x48/255, green: 0xd5/255, blue: 0x97/255, alpha: 0.12).cgColor
             layer?.borderWidth = 1
-            layer?.borderColor = NSColor(srgbRed: 0x48/255, green: 0xd5/255, blue: 0x97/255, alpha: 0.35).cgColor
+            layer?.borderColor = NSColor(srgbRed: 0x48/255, green: 0xd5/255, blue: 0x97/255, alpha: 0.45).cgColor
         case .hold:
             dot.layer?.backgroundColor = NSColor(srgbRed: 0x48/255, green: 0xd5/255, blue: 0x97/255, alpha: 1.0).cgColor
             badgeLabel.stringValue = " HOLD "
@@ -291,6 +294,21 @@ private final class QueueRowView: NSView {
         }
         // Only queued rows show the "jump →" hover hint (the holder is already live).
         jumpLabel.isHidden = { if case .queued = badge { return false } else { return true } }()
+    }
+
+    /// Gentle "on-air" pulse on the status dot — only the live floor-holder.
+    private func setDotPulsing(_ on: Bool) {
+        let key = "livePulse"
+        dot.layer?.removeAnimation(forKey: key)
+        guard on else { dot.layer?.opacity = 1.0; return }
+        let a = CABasicAnimation(keyPath: "opacity")
+        a.fromValue = 1.0
+        a.toValue = 0.35
+        a.duration = 1.1
+        a.autoreverses = true
+        a.repeatCount = .infinity
+        a.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        dot.layer?.add(a, forKey: key)
     }
 
     // MARK: - Hover + click

@@ -96,11 +96,17 @@ enum SessionDiscovery {
         let script = """
         set out to ""
         tell application "Terminal"
-            set winIDs to id of every window
-            repeat with widRaw in winIDs
+            -- Iterate windows DIRECTLY. The prior version did `set winIDs to id of
+            -- every window` then `first window whose id is wid` — that per-window
+            -- re-lookup is chronically flaky with many windows open: it
+            -- intermittently returns an empty result, which dropped the queue's
+            -- name resolution back to the raw lowercase floor slug (the "name
+            -- isn't exact / widget didn't update" bug). Direct iteration is
+            -- verified reliable across repeated runs; `try` per window still skips
+            -- any zombie / missing-value window.
+            repeat with w in every window
                 try
-                    set wid to widRaw as integer
-                    set w to first window whose id is wid
+                    set wid to id of w
                     set titles to custom title of every tab of w
                     set procs to processes of every tab of w
                     set ttys to tty of every tab of w

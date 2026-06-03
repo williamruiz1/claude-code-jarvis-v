@@ -43,14 +43,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         })
         gestureTap.start()
 
-        // Floating widget — summoned on demand (NOT always present). Show/Hide via
-        // the menu-bar item below, or the widget's own ✕.
+        // Floating widget — SHOWN ON LAUNCH (William 2026-06-03: "i want to see it, not hidden").
+        // Still hide/show-able via the menu-bar item below, or the widget's own ✕.
         widget = FloatingWidget(
             onStart: { [weak self] in self?.startVoiceConversation() },
             onOpenMainWindow: { [weak self] in self?.showMainWindow() },
             onOpenSettings: { [weak self] in self?.showSettings() }
         )
         widget.muteSentinel = muteSentinel
+        widget.show()
 
         // Menu bar — secondary surface (toggle widget visibility, About, Quit).
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -66,7 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openMainItem.target = self
         menu.addItem(openMainItem)
 
-        toggleWidgetItem = NSMenuItem(title: "Show floating widget", action: #selector(toggleWidget), keyEquivalent: "")
+        toggleWidgetItem = NSMenuItem(title: "Hide floating widget", action: #selector(toggleWidget), keyEquivalent: "")
         toggleWidgetItem.target = self
         menu.addItem(toggleWidgetItem)
 

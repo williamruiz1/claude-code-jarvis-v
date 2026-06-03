@@ -54,6 +54,11 @@ final class FloatingWidget: NSObject {
     /// Terminal tab) therefore can't cause repeated AppleScript scans.
     private var lastResolveKey: String = ""
     private var pendingSessionRefresh = false
+    /// Bounded retry counter for the current participant set. Terminal's
+    /// AppleScript intermittently returns empty under many windows, so a single
+    /// scan isn't reliable — we retry until names resolve or the cap is hit.
+    private var resolveAttempts = 0
+    private let maxResolveAttempts = 8
 
     /// `onStart` fires "+ New voice conversation" picks (existing behavior).
     /// `onOpenMainWindow` fires when the user picks "Open Main Window…" from
@@ -325,28 +330,49 @@ final class FloatingWidget: NSObject {
     /// unset so the next snapshot change retries).
     private func resolveNames(for snap: FloorSnapshot) {
         let key = participantKey(snap)
-        guard key != lastResolveKey, !pendingSessionRefresh else { return }
+        // New participant set → restart the retry budget. Same set → let any
+        // in-flight retry chain keep going (don't reset).
+        if key != lastResolveKey {
+            lastResolveKey = key
+            resolveAttempts = 0
+        }
+        scheduleResolveScan()
+    }
+
+    /// Scan Terminal sessions and re-render. If a participant still can't be named
+    /// (flaky/empty AppleScript, or its session not listed yet), retry on a short
+    /// timer up to `maxResolveAttempts` — Terminal's AppleScript is unreliable with
+    /// many windows, so one scan isn't enough. Stops the instant names resolve, the
+    /// floor goes idle, or the budget is exhausted (e.g. a cloud agent with no tab).
+    private func scheduleResolveScan() {
+        guard !pendingSessionRefresh, resolveAttempts < maxResolveAttempts else { return }
         pendingSessionRefresh = true
+        resolveAttempts += 1
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let sessions = SessionDiscovery.listSessions()
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.pendingSessionRefresh = false
-                // Empty while the floor is active = the scan failed (participants
-                // ARE live claude sessions, so there's always ≥1 Terminal tab).
-                // Keep whatever cache we have and DON'T record this key — so the
-                // next snapshot change retries. (Recording the key on a failed
-                // empty scan would poison retry and leave names stuck on slugs.)
-                if sessions.isEmpty, self.floorStore?.current.isActive == true {
-                    return
+                guard let snap = self.floorStore?.current, snap.isActive else { return } // floor idle → stop
+
+                func retrySoon() {
+                    guard self.resolveAttempts < self.maxResolveAttempts else { return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                        self?.scheduleResolveScan()
+                    }
                 }
-                self.lastResolveKey = key
+
+                // Empty = the scan failed (participants are live claude sessions,
+                // so there's always ≥1 Terminal tab). Keep the cache, retry.
+                if sessions.isEmpty { retrySoon(); return }
+
                 self.cachedSessions = sessions
                 self.hasLoadedSessionsOnce = true
-                if let s = self.floorStore?.current {
-                    self.queuePanel?.update(snapshot: s, sessions: sessions)
-                    self.resizePanelToFitContent()
-                }
+                let stillUnresolved = self.queuePanel?.update(snapshot: snap, sessions: sessions) ?? false
+                self.resizePanelToFitContent()
+                // Got data but a participant still didn't map (flaky partial list,
+                // or its tab not enumerated this pass) → retry.
+                if stillUnresolved { retrySoon() }
             }
         }
     }

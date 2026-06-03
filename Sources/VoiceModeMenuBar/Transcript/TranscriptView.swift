@@ -31,6 +31,22 @@ final class TranscriptView: NSView {
     private weak var store: TranscriptStore?
     private var observers: [NSObjectProtocol] = []
 
+    /// Hard cap on rendered turns. The text view only ever holds the most recent
+    /// `maxRenderedTurns`; older turns are trimmed from the front of the text
+    /// storage. This bounds TextKit layout cost to O(cap) per append instead of
+    /// O(session-length) — the fix for the 100%-CPU main-thread peg where
+    /// `scrollToEndOfDocument` re-laid-out a multi-hundred-MB document on every
+    /// turn. The full history still lives on disk via `TranscriptStore`.
+    private let maxRenderedTurns = 400
+
+    /// Char length of each rendered turn segment, oldest→newest, so we can trim
+    /// the exact prefix range when over `maxRenderedTurns`.
+    private var segmentLengths: [Int] = []
+
+    /// Coalesces scroll-to-bottom requests so a burst of appends triggers ONE
+    /// scroll (one layout pass), not one per turn.
+    private var scrollPending = false
+
     /// Current render mode. Setter persists to UserDefaults and re-renders.
     private(set) var mode: TranscriptRenderMode
 
@@ -143,28 +159,67 @@ final class TranscriptView: NSView {
         let storage = textView.textStorage ?? NSTextStorage()
         storage.beginEditing()
         storage.setAttributedString(NSAttributedString())
+        segmentLengths.removeAll(keepingCapacity: true)
         if let turns = store?.snapshot() {
-            for turn in turns {
-                storage.append(attributedString(for: turn, isFirst: storage.length == 0))
+            // Only render the most recent `maxRenderedTurns`; the rest stay on disk.
+            var first = true
+            for turn in turns.suffix(maxRenderedTurns) {
+                let piece = attributedString(for: turn, isFirst: first)
+                guard piece.length > 0 else { continue } // minimal mode suppresses non-Claude turns
+                storage.append(piece)
+                segmentLengths.append(piece.length)
+                first = false
             }
         }
         storage.endEditing()
-        scrollToBottom()
+        requestScrollToBottom(force: true)
     }
 
     private func appendTurn(_ turn: Turn) {
         let storage = textView.textStorage ?? NSTextStorage()
         let isFirst = storage.length == 0
+        let piece = attributedString(for: turn, isFirst: isFirst)
+        guard piece.length > 0 else { return } // minimal mode emits nothing for non-Claude turns
+
+        // Don't yank the scroll if the user has deliberately scrolled up to read
+        // back; only auto-follow when they're already near the bottom.
+        let follow = isScrolledNearBottom()
+
         storage.beginEditing()
-        storage.append(attributedString(for: turn, isFirst: isFirst))
+        storage.append(piece)
+        segmentLengths.append(piece.length)
+        // Trim oldest rendered turns so the document — and thus every layout pass —
+        // stays bounded. Amortized O(1): one turn appended, ~one trimmed at steady state.
+        while segmentLengths.count > maxRenderedTurns {
+            let drop = segmentLengths.removeFirst()
+            if drop > 0, drop <= storage.length {
+                storage.deleteCharacters(in: NSRange(location: 0, length: drop))
+            }
+        }
         storage.endEditing()
-        scrollToBottom()
+
+        if follow { requestScrollToBottom(force: false) }
     }
 
-    private func scrollToBottom() {
-        // Defer to next runloop tick so layout has settled before we measure.
+    /// True when the viewport is already at (or within ~80pt of) the document
+    /// bottom — the signal that the user wants to keep following new turns.
+    private func isScrolledNearBottom() -> Bool {
+        let clip = scrollView.contentView
+        let docHeight = textView.frame.height
+        guard docHeight > 0 else { return true }
+        let visibleMaxY = clip.bounds.origin.y + clip.bounds.height
+        return (docHeight - visibleMaxY) < 80
+    }
+
+    /// Coalesced scroll-to-bottom. Multiple calls in one runloop turn collapse to
+    /// a single `scrollToEndOfDocument` — and because the document is capped to
+    /// `maxRenderedTurns`, that call is now cheap regardless of session length.
+    private func requestScrollToBottom(force: Bool) {
+        if scrollPending { return }
+        scrollPending = true
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            self.scrollPending = false
             self.textView.scrollToEndOfDocument(nil)
         }
     }

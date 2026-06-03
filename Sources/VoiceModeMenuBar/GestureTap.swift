@@ -182,8 +182,9 @@ final class GestureTap {
     /// guaranteed fallback when the Next-Track tap isn't available.
     private func installHotKeyFallback() {
         // 0x7C == kVK_RightArrow. Modifiers: option + command.
-        let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            guard let self = self else { return }
+        // The closure only calls static FloorControlCLI methods + the file-scope
+        // logger, so it captures nothing — no `self` (and thus no retain cycle).
+        let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { event in
             let wantMods: NSEvent.ModifierFlags = [.option, .command]
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard mods == wantMods, event.keyCode == 0x7C else { return }

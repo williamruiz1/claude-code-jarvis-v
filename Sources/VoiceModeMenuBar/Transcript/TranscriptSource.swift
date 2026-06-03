@@ -72,8 +72,22 @@ final class ClaudeSessionJsonlAdapter: TranscriptSource {
     }
 
     func start() {
+        // Live-tail: start reading at the CURRENT end of file so we only surface
+        // NEW turns. The coordinator points us at whatever JSONL is freshest —
+        // which is often a large, active *coding* session (hundreds of MB), not a
+        // voice session. Reading from byte 0 replayed that whole file into the
+        // store on every attach, pegging the main thread and ballooning RAM. The
+        // transcript is a LIVE view, so skipping prior history is also correct.
+        // Enqueued on the serial `queue` before the timer's first tick.
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: self.fileURL.path),
+               let size = (attrs[.size] as? NSNumber)?.uint64Value {
+                self.bytesConsumed = size
+            }
+        }
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: pollInterval)
+        timer.schedule(deadline: .now() + pollInterval, repeating: pollInterval)
         timer.setEventHandler { [weak self] in self?.tick() }
         timer.resume()
         self.timer = timer
@@ -87,6 +101,11 @@ final class ClaudeSessionJsonlAdapter: TranscriptSource {
     private func tick() {
         guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return }
         defer { try? handle.close() }
+        // If the file shrank (truncated / rotated / replaced), our saved offset is
+        // now past EOF — re-anchor to the new end so we keep live-tailing instead
+        // of going permanently deaf.
+        let size = (try? handle.seekToEnd()) ?? 0
+        if size < bytesConsumed { bytesConsumed = size }
         do {
             try handle.seek(toOffset: bytesConsumed)
         } catch { return }

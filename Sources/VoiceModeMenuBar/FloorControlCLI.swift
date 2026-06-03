@@ -102,8 +102,8 @@ enum FloorControlCLI {
                 task.waitUntilExit()
                 ok = (task.terminationStatus == 0)
                 if !ok {
-                    let errData = (try? errPipe.fileHandleForReading.readToEnd()) ?? Data()
-                    let errStr = String(data: errData ?? Data(), encoding: .utf8) ?? ""
+                    let errData = (try? errPipe.fileHandleForReading.readToEnd()).flatMap { $0 } ?? Data()
+                    let errStr = String(data: errData, encoding: .utf8) ?? ""
                     log.error("convomode-floor.py \(args.joined(separator: " "), privacy: .public) exit=\(task.terminationStatus) err=\(errStr, privacy: .public)")
                 }
             } catch {

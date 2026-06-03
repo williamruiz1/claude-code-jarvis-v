@@ -214,6 +214,7 @@ final class FloatingWidget: NSObject {
             guard let self = self else { return }
             self.queuePanel?.update(snapshot: snap, sessions: self.cachedSessions)
             self.controlStrip?.update(snapshot: snap)
+            self.resizePanelToFitContent() // grow/shrink as participants come and go
         }
         store.start()
         self.floorStore = store
@@ -261,7 +262,11 @@ final class FloatingWidget: NSObject {
             strip.topAnchor.constraint(equalTo: queue.bottomAnchor, constant: 8),
             strip.leadingAnchor.constraint(equalTo: blur.leadingAnchor, constant: 12),
             strip.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -12),
-            strip.bottomAnchor.constraint(equalTo: blur.bottomAnchor, constant: -12),
+            // `lessThanOrEqual` (not `equal`) so the content height is driven by
+            // the top-anchored chain — letting `fittingSize` report the real
+            // content height so `resizePanelToFitContent()` can grow/shrink the
+            // panel to fit (the queue grows by one 34pt row per participant).
+            strip.bottomAnchor.constraint(lessThanOrEqualTo: blur.bottomAnchor, constant: -12),
 
             // Close X — top-right, untouched
             closeButton.topAnchor.constraint(equalTo: blur.topAnchor, constant: 4),
@@ -272,6 +277,26 @@ final class FloatingWidget: NSObject {
 
         self.panel = panel
         updateState(active: false)
+        resizePanelToFitContent()
+    }
+
+    /// Size the panel's height to exactly fit its content, anchored at the top
+    /// edge (the widget lives top-right and grows downward). Called after build
+    /// and on every queue change so the convomode queue + control strip are
+    /// never clipped — and the panel never carries dead space. Defensively
+    /// clamped so a bad measurement can't produce an absurd panel.
+    private func resizePanelToFitContent() {
+        guard let panel = panel, let content = panel.contentView else { return }
+        content.layoutSubtreeIfNeeded()
+        let fit = content.fittingSize.height
+        let visibleH = (panel.screen ?? NSScreen.main)?.visibleFrame.height ?? 1000
+        let target = max(160, min(fit, visibleH - 40))
+        guard target > 1, abs(target - panel.frame.height) > 0.5 else { return }
+        var f = panel.frame
+        let topEdge = f.maxY            // keep the top fixed; grow/shrink downward
+        f.size.height = target
+        f.origin.y = topEdge - target
+        panel.setFrame(f, display: true)
     }
 
     @objc private func handleStartTapped() {
@@ -314,7 +339,10 @@ final class FloatingWidget: NSObject {
 
     private func defaultFrame() -> NSRect {
         // Default: top-right corner of the main screen, 16pt inset from edges, below menu bar.
-        let size = NSSize(width: 300, height: 100)
+        // Height fits the full v3 layout (wordmark+icon+picker+divider+queue+control
+        // strip ≈ 180pt empty); `resizePanelToFitContent()` then tunes it exactly.
+        // The old 100pt default clipped the queue + control strip on first run.
+        let size = NSSize(width: 300, height: 230)
         if let visible = NSScreen.main?.visibleFrame {
             return NSRect(
                 x: visible.maxX - size.width - 16,

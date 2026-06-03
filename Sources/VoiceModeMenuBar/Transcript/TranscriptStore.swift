@@ -51,6 +51,18 @@ final class TranscriptStore {
 
     let sessionId: String
     private(set) var turns: [Turn] = []
+
+    /// Cap on in-memory turns. The on-disk JSONL keeps the full history; memory
+    /// holds only the most recent window. Without this, tailing a long session
+    /// (or loading a large persisted file) grew the array — and the rendered
+    /// text view — without bound, which drove the app to multi-GB RSS.
+    private let maxInMemoryTurns = 2000
+
+    /// At most this many bytes are read from the tail of a persisted JSONL on
+    /// load — so a previously-bloated session file can never be slurped whole
+    /// into memory again.
+    private let maxLoadBytes: UInt64 = 4 * 1024 * 1024
+
     private let fileURL: URL
     private let fileQueue = DispatchQueue(label: "voicemode.transcript-store.io", qos: .utility)
     private let encoder: JSONEncoder = {
@@ -87,6 +99,11 @@ final class TranscriptStore {
     @discardableResult
     func append(_ turn: Turn) -> Turn {
         turns.append(turn)
+        // Keep memory bounded. Trim in batches (with slack) so this is amortized
+        // O(1), not an O(n) removeFirst on every append once over the cap.
+        if turns.count > maxInMemoryTurns + 256 {
+            turns.removeFirst(turns.count - maxInMemoryTurns)
+        }
         let id = self.sessionId
         fileQueue.async { [weak self] in self?.persist(turn) }
 
@@ -134,12 +151,32 @@ final class TranscriptStore {
 
     private func loadFromDiskIfPresent() {
         guard FileManager.default.fileExists(atPath: fileURL.path),
-              let data = try? Data(contentsOf: fileURL),
+              let handle = try? FileHandle(forReadingFrom: fileURL) else { return }
+        defer { try? handle.close() }
+
+        // Read at most the trailing `maxLoadBytes` — never the whole file. A
+        // previously-bloated session file (the old replay bug produced a 392MB
+        // one) must never be slurped into RAM again.
+        let size = (try? handle.seekToEnd()) ?? 0
+        let start = size > maxLoadBytes ? size - maxLoadBytes : 0
+        try? handle.seek(toOffset: start)
+        guard let data = try? handle.readToEnd(), !data.isEmpty,
               let text = String(data: data, encoding: .utf8) else { return }
-        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+        // If we started mid-file, the first line is almost certainly a partial
+        // record — drop it.
+        if start > 0, !lines.isEmpty { lines.removeFirst() }
+
+        var loaded: [Turn] = []
+        for line in lines {
             guard let lineData = line.data(using: .utf8),
                   let turn = try? decoder.decode(Turn.self, from: lineData) else { continue }
-            turns.append(turn)
+            loaded.append(turn)
         }
+        if loaded.count > maxInMemoryTurns {
+            loaded.removeFirst(loaded.count - maxInMemoryTurns)
+        }
+        turns = loaded
     }
 }

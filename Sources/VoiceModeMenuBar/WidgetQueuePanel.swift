@@ -36,8 +36,24 @@ final class WidgetQueuePanel: NSView {
     /// right Terminal tab. Refreshed alongside snapshots. Main-thread only.
     private var sessionsBySlug: [String: ClaudeSession] = [:]
 
+    /// Map claude-PID → discovered ClaudeSession. The floor registers each
+    /// participant with `--pid $PPID`, so this is the identity-stable way to show
+    /// the participant's renamed Terminal title (e.g. "Admin") instead of the raw
+    /// registration slug (e.g. "fleet"). Main-thread only.
+    private var sessionsByPid: [Int: ClaudeSession] = [:]
+
+    /// Map floor agent-name → its registered PID (from the live snapshot), so a
+    /// row click can resolve the session by PID for the focus/jump.
+    private var pidByAgent: [String: Int] = [:]
+
     /// Last snapshot rendered — used to skip redundant rebuilds.
     private var lastSnapshot: FloorSnapshot?
+
+    /// Signature of the sessions list last rendered. The display name resolves
+    /// against the sessions list, so a sessions refresh (e.g. a slug→title
+    /// resolution arriving) must force a rebuild even when the snapshot is
+    /// unchanged.
+    private var lastSessionsKey: String = ""
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -84,15 +100,50 @@ final class WidgetQueuePanel: NSView {
     /// Update the rendered queue. Call on the main thread. `sessions` is the
     /// latest `SessionDiscovery.listSessions()` result so row clicks can focus
     /// the matching Terminal tab.
-    func update(snapshot: FloorSnapshot, sessions: [ClaudeSession]) {
-        // Rebuild the slug→session map every update (cheap; sessions list is small).
-        var map: [String: ClaudeSession] = [:]
-        for s in sessions { map[Self.slug(forTitle: s.title)] = s }
-        sessionsBySlug = map
+    /// True when the last render had a participant whose name could not be
+    /// resolved to a Terminal session (so it showed the raw slug). The host uses
+    /// this to trigger a one-shot session refresh.
+    private(set) var lastRenderHadUnresolved = false
 
-        // Skip redundant rebuilds when nothing visible changed.
-        if lastSnapshot == snapshot { return }
+    @discardableResult
+    func update(snapshot: FloorSnapshot, sessions: [ClaudeSession]) -> Bool {
+        // Rebuild the lookup maps every update (cheap; sessions list is small).
+        var bySlug: [String: ClaudeSession] = [:]
+        var byPid: [Int: ClaudeSession] = [:]
+        for s in sessions {
+            bySlug[Self.slug(forTitle: s.title)] = s
+            if let pid = s.claudePid { byPid[pid] = s }
+        }
+        sessionsBySlug = bySlug
+        sessionsByPid = byPid
+
+        // agent-name → registered PID, from the live snapshot (for row-click focus).
+        var pidMap: [String: Int] = [:]
+        if let h = snapshot.holder { pidMap[h.agent] = h.pid }
+        for e in snapshot.queue { pidMap[e.agent] = e.pid }
+        pidByAgent = pidMap
+
+        // Skip redundant rebuilds only when BOTH the snapshot AND the sessions
+        // list are unchanged — a sessions refresh can change a displayed name
+        // (slug → renamed title) even when the floor snapshot is identical.
+        let sessionsKey = sessions
+            .map { "\($0.claudePid ?? 0):\($0.title)" }
+            .sorted()
+            .joined(separator: "|")
+        if lastSnapshot == snapshot && lastSessionsKey == sessionsKey { return lastRenderHadUnresolved }
         lastSnapshot = snapshot
+        lastSessionsKey = sessionsKey
+
+        // Track whether any participant with a PID couldn't be matched to a
+        // Terminal session this render (→ it's showing the raw slug).
+        var hadUnresolved = false
+        func markIfUnresolved(agent: String, pid: Int) {
+            let resolved = (pid != 0 && sessionsByPid[pid] != nil) || sessionsBySlug[Self.slug(forAgent: agent)] != nil
+            if !resolved { hadUnresolved = true }
+        }
+        if let h = snapshot.holder { markIfUnresolved(agent: h.agent, pid: h.pid) }
+        for e in snapshot.queue { markIfUnresolved(agent: e.agent, pid: e.pid) }
+        lastRenderHadUnresolved = hadUnresolved
 
         // Clear existing rows.
         for v in stack.arrangedSubviews {
@@ -103,6 +154,7 @@ final class WidgetQueuePanel: NSView {
         var rows: [RowSpec] = []
         if let holder = snapshot.holder {
             rows.append(RowSpec(agent: holder.agent,
+                                displayName: displayName(agent: holder.agent, pid: holder.pid),
                                 badge: snapshot.queuePaused ? .hold : .live,
                                 meta: snapshot.queuePaused ? "holds floor · standby"
                                                            : "holding floor · live",
@@ -110,6 +162,7 @@ final class WidgetQueuePanel: NSView {
         }
         for (i, entry) in snapshot.queue.enumerated() {
             rows.append(RowSpec(agent: entry.agent,
+                                displayName: displayName(agent: entry.agent, pid: entry.pid),
                                 badge: .queued(i + 2), // holder is #1; first queued is #2
                                 meta: "queued",
                                 dimmed: snapshot.queuePaused))
@@ -120,19 +173,30 @@ final class WidgetQueuePanel: NSView {
             stack.addArrangedSubview(makeRow(spec))
         }
         invalidateIntrinsicContentSize()
+        return hadUnresolved
+    }
+
+    /// Resolve the name to SHOW for a floor participant: the renamed Terminal
+    /// session title, found first by PID (identity-stable), then by slug, and
+    /// finally falling back to the raw registration name if no session maps yet.
+    private func displayName(agent: String, pid: Int) -> String {
+        if pid != 0, let s = sessionsByPid[pid] { return s.title }
+        if let s = sessionsBySlug[Self.slug(forAgent: agent)] { return s.title }
+        return agent
     }
 
     // MARK: - Row model
 
     private struct RowSpec {
-        let agent: String
+        let agent: String        // raw floor registration name (slug) — used for the CLI
+        let displayName: String  // renamed Terminal title to show — falls back to agent
         let badge: Badge
         let meta: String
         let dimmed: Bool
     }
 
     private func makeRow(_ spec: RowSpec) -> NSView {
-        let row = QueueRowView(agent: spec.agent) { [weak self] agent in
+        let row = QueueRowView(agent: spec.agent, displayName: spec.displayName) { [weak self] agent in
             self?.handleRowClick(agent: agent)
         }
         row.configure(badge: spec.badge, meta: spec.meta, dimmed: spec.dimmed)
@@ -142,14 +206,18 @@ final class WidgetQueuePanel: NSView {
     // MARK: - Row click → promote + focus (design §9.2)
 
     private func handleRowClick(agent: String) {
-        let slug = Self.slug(forAgent: agent)
-        // 1) Promote to floor head immediately (intent via CLI — the single writer).
-        FloorControlCLI.promote(agent: slug)
-        // 2) Jump to the Terminal session if we can map the slug to one.
-        if let session = sessionsBySlug[slug] {
+        // 1) Promote to floor head immediately. Use the RAW agent name — that's
+        //    the exact value in the queue the CLI matches on (re-slugging a
+        //    multi-word name here would fail to match the queue entry).
+        FloorControlCLI.promote(agent: agent)
+        // 2) Jump to the Terminal session — resolve by PID first (identity-stable),
+        //    then by slug.
+        let session = pidByAgent[agent].flatMap { sessionsByPid[$0] }
+            ?? sessionsBySlug[Self.slug(forAgent: agent)]
+        if let session = session {
             SessionDiscovery.focus(session, andTriggerVoice: false)
         } else {
-            log.notice("WidgetQueuePanel: no Terminal session mapped for slug \(slug, privacy: .public); promoted only.")
+            log.notice("WidgetQueuePanel: no Terminal session mapped for agent \(agent, privacy: .public); promoted only.")
         }
     }
 
@@ -178,7 +246,8 @@ final class WidgetQueuePanel: NSView {
 /// A single clickable queue row: [status dot] name + meta … [badge] [jump →].
 /// Click anywhere in the row → promote/jump. Hover reveals the "jump →" hint.
 private final class QueueRowView: NSView {
-    private let agent: String
+    private let agent: String       // raw registration name passed back on click (for the CLI)
+    private let displayName: String // renamed Terminal title shown in the row
     private let onClick: (String) -> Void
 
     private let dot = NSView()
@@ -188,8 +257,9 @@ private final class QueueRowView: NSView {
     private let jumpLabel = NSTextField(labelWithString: "jump →")
     private var trackingArea: NSTrackingArea?
 
-    init(agent: String, onClick: @escaping (String) -> Void) {
+    init(agent: String, displayName: String, onClick: @escaping (String) -> Void) {
         self.agent = agent
+        self.displayName = displayName
         self.onClick = onClick
         super.init(frame: .zero)
         build()
@@ -213,7 +283,8 @@ private final class QueueRowView: NSView {
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         nameLabel.textColor = .labelColor
-        nameLabel.stringValue = agent
+        nameLabel.stringValue = displayName
+        nameLabel.lineBreakMode = .byTruncatingTail
         addSubview(nameLabel)
 
         metaLabel.translatesAutoresizingMaskIntoConstraints = false

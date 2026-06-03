@@ -48,6 +48,13 @@ final class FloatingWidget: NSObject {
     private var hasLoadedSessionsOnce: Bool = false
     private var pendingMenuRefresh: Bool = false
 
+    /// Participant set (agent:pid keys) we last ran a name-resolution scan for —
+    /// so the floor-driven session refresh fires once per distinct set, not on
+    /// every poll. A permanently-unnamed participant (e.g. a cloud agent with no
+    /// Terminal tab) therefore can't cause repeated AppleScript scans.
+    private var lastResolveKey: String = ""
+    private var pendingSessionRefresh = false
+
     /// `onStart` fires "+ New voice conversation" picks (existing behavior).
     /// `onOpenMainWindow` fires when the user picks "Open Main Window…" from
     /// the widget's session menu OR clicks the toolbar button on the toggle row.
@@ -212,9 +219,13 @@ final class FloatingWidget: NSObject {
         // panel + strip (this was the missing wire: the panel was never fed).
         let store = FloorQueueStore { [weak self] snap in
             guard let self = self else { return }
-            self.queuePanel?.update(snapshot: snap, sessions: self.cachedSessions)
+            let unresolved = self.queuePanel?.update(snapshot: snap, sessions: self.cachedSessions) ?? false
             self.controlStrip?.update(snapshot: snap)
             self.resizePanelToFitContent() // grow/shrink as participants come and go
+            // If a participant can't be named yet, refresh the session list ONCE
+            // so the row shows the renamed Terminal title (e.g. "Admin") instead
+            // of the raw floor slug (e.g. "fleet").
+            if snap.isActive && unresolved { self.resolveNames(for: snap) }
         }
         store.start()
         self.floorStore = store
@@ -297,6 +308,45 @@ final class FloatingWidget: NSObject {
         f.size.height = target
         f.origin.y = topEdge - target
         panel.setFrame(f, display: true)
+    }
+
+    /// Stable key for the current participant set (agent:pid pairs).
+    private func participantKey(_ snap: FloorSnapshot) -> String {
+        var ids: [String] = []
+        if let h = snap.holder { ids.append("\(h.agent):\(h.pid)") }
+        ids += snap.queue.map { "\($0.agent):\($0.pid)" }
+        return ids.sorted().joined(separator: "|")
+    }
+
+    /// One-shot background session scan (AppleScript + `ps`) to resolve a
+    /// participant's renamed Terminal title. Fires at most once per distinct
+    /// participant set; never lets a transient empty scan wipe already-resolved
+    /// names while a convomode is in progress (a failed scan leaves `lastResolveKey`
+    /// unset so the next snapshot change retries).
+    private func resolveNames(for snap: FloorSnapshot) {
+        let key = participantKey(snap)
+        guard key != lastResolveKey, !pendingSessionRefresh else { return }
+        pendingSessionRefresh = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let sessions = SessionDiscovery.listSessions()
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.pendingSessionRefresh = false
+                // Empty + floor active + we had a list = the scan almost certainly
+                // failed (the participants ARE running claude). Keep the good list;
+                // allow a retry on the next snapshot change.
+                if sessions.isEmpty, self.floorStore?.current.isActive == true, !self.cachedSessions.isEmpty {
+                    return
+                }
+                self.lastResolveKey = key
+                self.cachedSessions = sessions
+                self.hasLoadedSessionsOnce = true
+                if let s = self.floorStore?.current {
+                    self.queuePanel?.update(snapshot: s, sessions: sessions)
+                    self.resizePanelToFitContent()
+                }
+            }
+        }
     }
 
     @objc private func handleStartTapped() {
@@ -400,7 +450,11 @@ extension FloatingWidget: NSMenuDelegate {
         }
     }
 
-    private func renderMenu(_ menu: NSMenu, sessions: [ClaudeSession], isLoading: Bool) {
+    private func renderMenu(_ menu: NSMenu, sessions allSessions: [ClaudeSession], isLoading: Bool) {
+        // The menu offers "start voice in this session", so it only lists
+        // voice-capable tabs. (The floor-queue name resolution uses the full
+        // list — see WidgetQueuePanel.)
+        let sessions = allSessions.filter { $0.voiceCapable }
         // Preserve the title item (index 0) and rebuild everything below.
         while menu.numberOfItems > 1 { menu.removeItem(at: 1) }
 

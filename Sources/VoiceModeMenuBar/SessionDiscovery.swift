@@ -46,6 +46,25 @@ struct ClaudeSession: Equatable {
     let status: SessionStatus  // Parsed from the title's leading char
     let windowID: Int
     let tabIndex: Int
+    /// PID of the `claude` process running in this tab. This is the identity the
+    /// convomode floor registers (`--pid $PPID`), so it's the stable key for
+    /// mapping a floor-queue participant back to its renamed Terminal title.
+    let claudePid: Int?
+    /// Whether this session's `claude` started recently enough to have the
+    /// voicemode env (the "+ New voice" menu only offers voice-capable ones).
+    /// Name resolution for the floor queue ignores this — a floor participant is
+    /// voice-capable by definition regardless of when its process started.
+    let voiceCapable: Bool
+
+    init(title: String, status: SessionStatus, windowID: Int, tabIndex: Int,
+         claudePid: Int? = nil, voiceCapable: Bool = true) {
+        self.title = title
+        self.status = status
+        self.windowID = windowID
+        self.tabIndex = tabIndex
+        self.claudePid = claudePid
+        self.voiceCapable = voiceCapable
+    }
 }
 
 /// Lists Claude Code sessions by interrogating Terminal.app via AppleScript.
@@ -119,7 +138,7 @@ enum SessionDiscovery {
         // Build a TTY → most-recent-claude-PID-start-time map ONCE via a single
         // `ps -A` call. O(processes) work happens once instead of O(sessions ×
         // ps spawn) — the per-session fork was the 2-3 second dropdown lag.
-        let tty2start = mostRecentClaudeStartByTty()
+        let tty2info = mostRecentClaudeByTty()
         let cutoff = mcpRegistrationCutoff()
 
         var sessions: [ClaudeSession] = []
@@ -134,22 +153,32 @@ enum SessionDiscovery {
                 ? "Claude session (window \(wid))"
                 : parsedTitle
 
-            // Filter: include only sessions whose claude started after the cutoff.
+            // Include EVERY claude tab; flag whether it's voice-capable (started
+            // after the cutoff) rather than dropping it. The "+ New voice" menu
+            // filters on the flag; the floor-queue name resolution uses all tabs
+            // (a floor participant is voice-capable by definition, even if its
+            // process predates the cutoff — which is exactly the case that made
+            // a long-running session show its raw slug instead of its title).
             let ttyShort = tty.replacingOccurrences(of: "/dev/", with: "")
-            guard let claudeStart = tty2start[ttyShort], claudeStart > cutoff else { continue }
+            let info = tty2info[ttyShort]
+            let voiceCapable = info.map { $0.start > cutoff } ?? false
 
-            sessions.append(ClaudeSession(title: displayTitle, status: status, windowID: wid, tabIndex: idx))
+            sessions.append(ClaudeSession(title: displayTitle, status: status,
+                                          windowID: wid, tabIndex: idx,
+                                          claudePid: info?.pid, voiceCapable: voiceCapable))
         }
         return sessions
     }
 
     /// Single bulk `ps -A` call that returns a map from TTY (e.g. "ttys024")
-    /// to the start time of the *most recent* `claude` CLI process attached
+    /// to the start time + PID of the *most recent* `claude` CLI process attached
     /// to it. Multiple claude restarts in the same tab → we keep the newest.
-    private static func mostRecentClaudeStartByTty() -> [String: Date] {
+    /// The PID lets a floor-queue participant (registered with `--pid $PPID`) be
+    /// resolved back to its Terminal tab — and thus its renamed title.
+    private static func mostRecentClaudeByTty() -> [String: (start: Date, pid: Int)] {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/ps")
-        task.arguments = ["-A", "-o", "tty=,lstart=,comm="]
+        task.arguments = ["-A", "-o", "tty=,pid=,lstart=,comm="]
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = Pipe()
@@ -165,21 +194,22 @@ enum SessionDiscovery {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "EEE MMM d HH:mm:ss yyyy"
 
-        var result: [String: Date] = [:]
+        var result: [String: (start: Date, pid: Int)] = [:]
         for line in stdout.split(separator: "\n") {
-            // Each line: "<tty> <Day Mon dd HH:MM:SS yyyy> <comm>"
+            // Each line: "<tty> <pid> <Day Mon dd HH:MM:SS yyyy> <comm>"
             let tokens = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-            guard tokens.count >= 7 else { continue }
+            guard tokens.count >= 8, let pid = Int(tokens[1]) else { continue }
             let tty = tokens[0]
             let comm = tokens[tokens.count - 1]
             guard comm == "claude" || comm.hasSuffix("/claude") else { continue }
 
-            let lstart = tokens[1..<6].joined(separator: " ")
+            // lstart is the 5 tokens after tty+pid: "Day Mon dd HH:MM:SS yyyy".
+            let lstart = tokens[2..<7].joined(separator: " ")
             guard let date = formatter.date(from: lstart) else { continue }
 
             // Keep only the most recent claude start per tty (handles restarts).
-            if let existing = result[tty], existing > date { continue }
-            result[tty] = date
+            if let existing = result[tty], existing.start > date { continue }
+            result[tty] = (date, pid)
         }
         return result
     }

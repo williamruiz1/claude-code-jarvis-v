@@ -74,6 +74,31 @@ enum FloorControlCLI {
         run(["promote", "--agent", agent], completion: completion)
     }
 
+    // MARK: - Live pause (interrupt mid-sentence)
+
+    /// The flag file the patched voicemode `audio_player.py` watches. Its presence
+    /// makes voicemode abort TTS playback mid-word; removing it lets the next
+    /// utterance play. The widget's Pause/Proceed toggles it (no Python needed —
+    /// it's just a sentinel file).
+    static var livePauseFlagURL: URL {
+        URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".voicemode")
+            .appendingPathComponent("pause.flag")
+    }
+
+    /// Pause live speech NOW (cut mid-sentence).
+    static func setLivePause() {
+        let url = livePauseFlagURL
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                 withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: url.path, contents: Data())
+    }
+
+    /// Resume — let speech play again.
+    static func clearLivePause() {
+        try? FileManager.default.removeItem(at: livePauseFlagURL)
+    }
+
     // MARK: - Runner
 
     /// Execute `python3 convomode-floor.py <args...>` on a background queue.

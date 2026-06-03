@@ -173,8 +173,14 @@ final class WidgetControlStrip: NSView {
 
     @objc private func handlePause(_ sender: NSButton) {
         if isPaused {
+            // Proceed: resume. Let speech play again, reopen the mic, unfreeze the queue.
+            FloorControlCLI.clearLivePause()
+            muteSentinel?.setMuted(false)
             FloorControlCLI.proceed()
         } else {
+            // Pause: cut speech mid-sentence (flag), stop listening (mute), freeze the queue.
+            FloorControlCLI.setLivePause()
+            if let s = muteSentinel { s.setMuted(true) }
             FloorControlCLI.pause()
         }
         flash(sender)

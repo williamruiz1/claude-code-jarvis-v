@@ -3,20 +3,28 @@ import os
 
 private let log = Logger(subsystem: "com.williamruiz.voicemode-monitor", category: "WidgetControlStrip")
 
-/// The three convomode control buttons — the on-screen twins of the AirPods
-/// gestures (design §9.2, mockup strip). Lives at the bottom of the floating
-/// widget's queue panel.
+/// The convomode control buttons — the on-screen twins of the AirPods
+/// gestures (design §9.2, mockup strip), plus push-to-talk (W3b, 2026-09-13).
+/// Lives at the bottom of the floating widget's queue panel.
 ///
-/// | Button            | Gesture twin     | Action                                            |
-/// |-------------------|------------------|---------------------------------------------------|
-/// | 🎙 Mute / Unmute  | single-click     | flip the device Mute property via `MuteSentinel`  |
-/// | ⏭ Advance         | double-click     | `convomode-floor.py request-advance`              |
-/// | ⏸ Pause / ▶ Proceed | global hold    | `convomode-floor.py pause` / `proceed`            |
+/// | Button              | Gesture twin     | Action                                            |
+/// |---------------------|------------------|----------------------------------------------------|
+/// | 🎙 Mute / Unmute    | single-click     | flip the device Mute property via `MuteSentinel`  |
+/// | ⏭ Advance           | double-click     | `convomode-floor.py request-advance`              |
+/// | ⏸ Pause / ▶ Proceed | global hold      | `convomode-floor.py pause` / `proceed`            |
+/// | 🖐 Push-to-talk     | (new, no gesture)| `convomode-turn-end.sh end`                       |
+///
+/// Push-to-talk ends the CURRENT listen window immediately instead of
+/// waiting for silence-detection — it is not a mic toggle, and (see
+/// `TurnEndControlCLI`'s header) it can only END a turn already in
+/// progress, never start one from outside voicemode.
 ///
 /// Each button flash-acknowledges like `WidgetVoicePicker`. The mute + pause
 /// buttons reflect current state (label/icon flip). If the floor CLI is
 /// unavailable, Advance + Pause/Proceed disable with an explanatory tooltip
 /// (the Mute button stays enabled — it only needs CoreAudio, not the CLI).
+/// Push-to-talk disables independently if `convomode-turn-end.sh` is missing
+/// — it does not depend on the floor CLI at all.
 final class WidgetControlStrip: NSView {
 
     /// Owner supplies the live `MuteSentinel` so the 🎙 button can flip the
@@ -27,6 +35,7 @@ final class WidgetControlStrip: NSView {
     private let muteButton = NSButton()
     private let advanceButton = NSButton()
     private let pauseButton = NSButton()
+    private let pushToTalkButton = NSButton()
 
     /// Cached state used to render labels/icons.
     private var isMuted = false
@@ -57,6 +66,9 @@ final class WidgetControlStrip: NSView {
         configureButton(pauseButton, symbol: "pause.fill", title: "Pause",
                         tooltip: "Pause all handoffs (global hold)",
                         action: #selector(handlePause))
+        configureButton(pushToTalkButton, symbol: "hand.raised.fill", title: "Done",
+                        tooltip: "Push-to-talk: end the current listen window now, instead of waiting for silence-detection",
+                        action: #selector(handlePushToTalk))
 
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .horizontal
@@ -66,6 +78,7 @@ final class WidgetControlStrip: NSView {
         stack.addArrangedSubview(muteButton)
         stack.addArrangedSubview(advanceButton)
         stack.addArrangedSubview(pauseButton)
+        stack.addArrangedSubview(pushToTalkButton)
         addSubview(stack)
 
         NSLayoutConstraint.activate([
@@ -101,6 +114,8 @@ final class WidgetControlStrip: NSView {
     }
 
     /// Disable the CLI-dependent buttons when `convomode-floor.py` is missing.
+    /// Push-to-talk has its own independent CLI (`convomode-turn-end.sh`) and
+    /// disables separately — it does not depend on the floor CLI.
     private func applyCLIAvailability() {
         let available = FloorControlCLI.isAvailable
         advanceButton.isEnabled = available
@@ -109,6 +124,12 @@ final class WidgetControlStrip: NSView {
             let hint = "convomode-floor.py not found at ~/.local/bin/founder-os/ — install the floor CLI to enable."
             advanceButton.toolTip = hint
             pauseButton.toolTip = hint
+        }
+
+        let turnEndAvailable = TurnEndControlCLI.isAvailable
+        pushToTalkButton.isEnabled = turnEndAvailable
+        if !turnEndAvailable {
+            pushToTalkButton.toolTip = "convomode-turn-end.sh not found at ~/.local/bin/founder-os/ — install it to enable push-to-talk."
         }
     }
 
@@ -183,6 +204,15 @@ final class WidgetControlStrip: NSView {
             if let s = muteSentinel { s.setMuted(true) }
             FloorControlCLI.pause()
         }
+        flash(sender)
+    }
+
+    @objc private func handlePushToTalk(_ sender: NSButton) {
+        // Ends the current listen window now — see TurnEndControlCLI's header
+        // for the full mechanism. Fire-and-forget, same as the other buttons;
+        // no state to reflect back (unlike mute/pause) since the signal is
+        // consumed and cleared within ~0.1s of a turn actually listening.
+        TurnEndControlCLI.end()
         flash(sender)
     }
 
